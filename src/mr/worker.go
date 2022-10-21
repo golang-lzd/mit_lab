@@ -1,77 +1,213 @@
 package mr
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"sort"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
 
-
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
+type AWorker struct {
+	Mapf    func(filename string, contents string) []KeyValue
+	Reducef func(key string, values []string) string
+
+	isDone   bool
+	WorkerID int64
+}
+
+var worker AWorker
+
+func (aw *AWorker) process() {
+	for !aw.isDone {
+		aw.CallAskTask()
+	}
+}
+
+func (aw *AWorker) CallTaskDone(reply *AskTaskReply) {
+	args := TaskDoneReq{
+		TaskType: reply.TaskType,
+		TaskID:   reply.TaskID,
+	}
+	resp := TaskDoneReply{}
+
+	_ = call("Coordinator.TaskDone", &args, &resp)
+}
+
+// 1. 根据传入的fileName 读出数据
+// 2. 根据传入的mapf 得到word,count
+// 3. 根据传入的NReducer 写入文件
+// 4. send rpc call to notify coordinator task done
+
+func ReadFromFile(filename string) string {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+
+	return string(content)
+}
+
+func WriteToMiddleFile(data []KeyValue, filename string) {
+	fw, _ := ioutil.TempFile("./", "middle-file-*.txt")
+	enc := json.NewEncoder(fw)
+	for _, kv := range data {
+		_ = enc.Encode(&kv)
+	}
+	os.Rename(fw.Name(), filename)
+	fw.Close()
+}
+
+func ReadFromMiddleFile(filename string) []KeyValue {
+	fr, _ := os.Open(filename)
+	dec := json.NewDecoder(fr)
+	kvs := make([]KeyValue, 10)
+	for {
+		var kv KeyValue
+		if err := dec.Decode(&kv); err != nil {
+			break
+		}
+		kvs = append(kvs, kv)
+	}
+	return kvs
+}
+
+func (aw *AWorker) ExecMapTask(reply *AskTaskReply) {
+	content := ReadFromFile(reply.MapTaskInfo.FileName)
+	kvs := aw.Mapf(reply.MapTaskInfo.FileName, content)
+	sort.SliceStable(kvs, func(i int, j int) bool {
+		return kvs[i].Key < kvs[j].Key
+	})
+
+	for i := 0; i < reply.MapTaskInfo.NReducer; i++ {
+		tmp := make([]KeyValue, 10)
+		for _, v := range kvs {
+			if ihash(v.Key)%reply.MapTaskInfo.NReducer == i {
+				tmp = append(tmp, v)
+			}
+		}
+		filename := GetMiddleFileName(reply.MapTaskInfo.FileIndex, i)
+		WriteToMiddleFile(tmp, filename)
+	}
+	aw.CallTaskDone(reply)
+}
+
+// 1. 根据传入的ReducerID 读取数据
+// 2. 将数据经过reducef 得到结果数组
+// 3. 将结果数据写入文件
+// 4. rpc 告知 Coordinator 任务完成
+
+func (aw *AWorker) WriteToOutFile(data []KeyValue, ReduceIdx int) {
+	filename := GetOutFileName(ReduceIdx)
+	fw, _ := ioutil.TempFile("./", "out-tmp-*.txt")
+	for i := 0; i < len(data); i++ {
+		fmt.Fprintf(fw, "%s %s\n", data[i].Key, data[i].Value)
+	}
+	os.Rename(fw.Name(), filename)
+	fw.Close()
+}
+
+func (aw *AWorker) ExecReduceTask(reply *AskTaskReply) {
+	//data := aw.ReadFromMiddleFile(reply.ReducerTaskInfo.ReducerIndex, reply.ReducerTaskInfo.FileCount)
+	data := make([]KeyValue, 10)
+	for i := 0; i < reply.ReducerTaskInfo.FileCount; i++ {
+		filename := GetMiddleFileName(i, reply.ReducerTaskInfo.ReducerIndex)
+		tmp := ReadFromMiddleFile(filename)
+		data = append(data, tmp...)
+	}
+
+	sort.SliceStable(data, func(i, j int) bool {
+		return data[i].Key < data[j].Key
+	})
+
+	ans := make([]KeyValue, 10)
+	i := 0
+	for j := 1; j < len(data); j++ {
+		if data[i].Key == data[j].Key {
+			continue
+		}
+		vals := make([]string, 10)
+		for k := i; k < j; k++ {
+			vals = append(vals, data[k].Value)
+		}
+		res := aw.Reducef(data[i].Key, vals)
+		ans = append(ans, KeyValue{
+			Key:   data[i].Key,
+			Value: res,
+		})
+	}
+	aw.WriteToOutFile(ans, reply.ReducerTaskInfo.ReducerIndex)
+	aw.CallTaskDone(reply)
+}
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
+	worker = AWorker{
+		Mapf:     mapf,
+		Reducef:  reducef,
+		isDone:   false,
+		WorkerID: GetUUID(),
+	}
+	worker.process()
 }
 
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+// if the worker fails to contact the coordinator,
+//it can assume that the coordinator has exited because the job is done, and so the worker can terminate too.
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+func (aw *AWorker) CallAskTask() {
+	args := AskTaskReq{}
+	reply := AskTaskReply{}
 
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
+	ok := call("Coordinator.AskTask", &args, &reply)
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
+		switch reply.TaskType {
+		case TaskMapper:
+			aw.ExecMapTask(&reply)
+		case TaskReducer:
+			aw.ExecReduceTask(&reply)
+		case TaskWait:
+			time.Sleep(time.Second)
+		case TaskEnd:
+			fmt.Println("任务完成,worker 退出.")
+			// os.Exit(0)
+			aw.isDone = true
+		default:
+			fmt.Println("发生未知错误")
+			os.Exit(1)
+		}
 	} else {
-		fmt.Printf("call failed!\n")
+		// 如果调用报错，假设 Coordinator 完成任务退出
+		aw.isDone = true
 	}
 }
 
-//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()

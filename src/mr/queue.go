@@ -59,19 +59,19 @@ type BlockedQueue struct {
 	lock *sync.Mutex
 }
 
-func (queue *BlockedQueue) PeekFront() *TaskInfo {
+func (queue *BlockedQueue) PeekFront() TaskInfo {
 	defer queue.lock.Unlock()
 	queue.lock.Lock()
 
 	tmp := queue.list.PopFront()
 	if tmp != nil {
-		return tmp.(*TaskInfo)
+		return tmp.(TaskInfo)
 	} else {
 		return nil
 	}
 }
 
-func (queue *BlockedQueue) PushBack(task *TaskInfo) {
+func (queue *BlockedQueue) PushBack(task TaskInfo) {
 	defer queue.lock.Unlock()
 	queue.lock.Lock()
 
