@@ -59,6 +59,10 @@ type BlockedQueue struct {
 	lock *sync.Mutex
 }
 
+func (queue *BlockedQueue) Size() int {
+	return queue.list.Count
+}
+
 func (queue *BlockedQueue) PeekFront() TaskInfo {
 	defer queue.lock.Unlock()
 	queue.lock.Lock()
@@ -79,6 +83,9 @@ func (queue *BlockedQueue) PushBack(task TaskInfo) {
 }
 
 func (queue *BlockedQueue) Empty() bool {
+	defer queue.lock.Unlock()
+	queue.lock.Lock()
+
 	return queue.list.Empty()
 }
 

@@ -26,7 +26,7 @@ type AWorker struct {
 	WorkerID int64
 }
 
-var worker AWorker
+var worker *AWorker
 
 func (aw *AWorker) process() {
 	for !aw.isDone {
@@ -76,7 +76,7 @@ func WriteToMiddleFile(data []KeyValue, filename string) {
 func ReadFromMiddleFile(filename string) []KeyValue {
 	fr, _ := os.Open(filename)
 	dec := json.NewDecoder(fr)
-	kvs := make([]KeyValue, 10)
+	kvs := make([]KeyValue, 0)
 	for {
 		var kv KeyValue
 		if err := dec.Decode(&kv); err != nil {
@@ -90,12 +90,12 @@ func ReadFromMiddleFile(filename string) []KeyValue {
 func (aw *AWorker) ExecMapTask(reply *AskTaskReply) {
 	content := ReadFromFile(reply.MapTaskInfo.FileName)
 	kvs := aw.Mapf(reply.MapTaskInfo.FileName, content)
+
 	sort.SliceStable(kvs, func(i int, j int) bool {
 		return kvs[i].Key < kvs[j].Key
 	})
-
 	for i := 0; i < reply.MapTaskInfo.NReducer; i++ {
-		tmp := make([]KeyValue, 10)
+		tmp := make([]KeyValue, 0)
 		for _, v := range kvs {
 			if ihash(v.Key)%reply.MapTaskInfo.NReducer == i {
 				tmp = append(tmp, v)
@@ -123,8 +123,7 @@ func (aw *AWorker) WriteToOutFile(data []KeyValue, ReduceIdx int) {
 }
 
 func (aw *AWorker) ExecReduceTask(reply *AskTaskReply) {
-	//data := aw.ReadFromMiddleFile(reply.ReducerTaskInfo.ReducerIndex, reply.ReducerTaskInfo.FileCount)
-	data := make([]KeyValue, 10)
+	data := make([]KeyValue, 0)
 	for i := 0; i < reply.ReducerTaskInfo.FileCount; i++ {
 		filename := GetMiddleFileName(i, reply.ReducerTaskInfo.ReducerIndex)
 		tmp := ReadFromMiddleFile(filename)
@@ -135,13 +134,14 @@ func (aw *AWorker) ExecReduceTask(reply *AskTaskReply) {
 		return data[i].Key < data[j].Key
 	})
 
-	ans := make([]KeyValue, 10)
-	i := 0
-	for j := 1; j < len(data); j++ {
-		if data[i].Key == data[j].Key {
-			continue
+	ans := make([]KeyValue, 0)
+
+	for i := 0; i < len(data); {
+		j := i + 1
+		for j < len(data) && data[i].Key == data[j].Key {
+			j++
 		}
-		vals := make([]string, 10)
+		vals := make([]string, 0)
 		for k := i; k < j; k++ {
 			vals = append(vals, data[k].Value)
 		}
@@ -150,7 +150,9 @@ func (aw *AWorker) ExecReduceTask(reply *AskTaskReply) {
 			Key:   data[i].Key,
 			Value: res,
 		})
+		i = j
 	}
+
 	aw.WriteToOutFile(ans, reply.ReducerTaskInfo.ReducerIndex)
 	aw.CallTaskDone(reply)
 }
@@ -166,12 +168,13 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	worker = AWorker{
+	worker = &AWorker{
 		Mapf:     mapf,
 		Reducef:  reducef,
 		isDone:   false,
 		WorkerID: GetUUID(),
 	}
+	log.Printf("workerID: %d \n", worker.WorkerID)
 	worker.process()
 }
 
@@ -186,13 +189,16 @@ func (aw *AWorker) CallAskTask() {
 	if ok {
 		switch reply.TaskType {
 		case TaskMapper:
+			log.Printf("[Worker-%d] get mapper task.%v \n", aw.WorkerID, FormatStruct(reply))
 			aw.ExecMapTask(&reply)
 		case TaskReducer:
+			log.Printf("[Worker-%d] get reducer task.%v \n", aw.WorkerID, FormatStruct(reply))
 			aw.ExecReduceTask(&reply)
 		case TaskWait:
+			log.Printf("[Worker-%d] task wait \n", aw.WorkerID)
 			time.Sleep(time.Second)
 		case TaskEnd:
-			fmt.Println("任务完成,worker 退出.")
+			log.Printf("[Worker-%d] 任务完成,worker 退出. \n", aw.WorkerID)
 			// os.Exit(0)
 			aw.isDone = true
 		default:

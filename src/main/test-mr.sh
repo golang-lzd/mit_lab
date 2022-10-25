@@ -5,8 +5,8 @@
 #
 
 # comment this out to run the tests without the Go race detector.
-RACE=-race
-
+#RACE=-race
+RACE=''
 if [[ "$OSTYPE" = "darwin"* ]]
 then
   if go version | grep 'go1.17.[012345]'
@@ -96,6 +96,7 @@ else
   echo '---' wc test: FAIL
   failed_any=1
 fi
+
 
 # wait for remaining workers and coordinator to exit.
 wait

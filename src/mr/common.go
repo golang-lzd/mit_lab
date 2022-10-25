@@ -1,8 +1,11 @@
 package mr
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/bwmarrin/snowflake"
+	"log"
 	"time"
 )
 
@@ -40,11 +43,11 @@ var _ TaskInfo = (*MapTask)(nil)
 var _ TaskInfo = (*ReducerTask)(nil)
 
 func GetMiddleFileName(mapIdx int, reducerIdx int) string {
-	return fmt.Sprintf("out-%d-%d", mapIdx, reducerIdx)
+	return fmt.Sprintf("middle-%d-%d", mapIdx, reducerIdx)
 }
 
 func GetOutFileName(reducerIdx int) string {
-	return fmt.Sprintf("out-%d.txt", reducerIdx)
+	return fmt.Sprintf("mr-out-%d", reducerIdx)
 }
 
 const TaskTimeOut = 10 * time.Second
@@ -67,7 +70,22 @@ type TaskDoneReq struct {
 type TaskDoneReply struct {
 }
 
+var node *snowflake.Node
+
+func init() {
+	node, _ = snowflake.NewNode(1)
+}
+
 func GetUUID() int64 {
-	node, _ := snowflake.NewNode(1)
 	return node.Generate().Int64()
+}
+
+func FormatStruct(s interface{}) string {
+	bs, err := json.Marshal(s)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	var out bytes.Buffer
+	json.Indent(&out, bs, "", "\t")
+	return out.String()
 }
