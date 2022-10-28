@@ -59,6 +59,7 @@ func NewFSM(initState FSMState) *FSM {
 	}
 }
 
+// state
 var (
 	InitializedState = FSMState("initialized")
 	LeaderState      = FSMState("leader")
@@ -66,3 +67,51 @@ var (
 	FollowerState    = FSMState("follower")
 )
 
+// event
+var (
+	StartsUpEvent                     = FSMEvent("starts up")
+	TimeOutStartsElectionEvent        = FSMEvent("timeout starts election")
+	TimeOutNewElectionEvent           = FSMEvent("timeout new election")
+	ReceiveVotesFromMajorityOfServers = FSMEvent("receive votes from majority servers")
+	DiscoversServerWithHigherTerm     = FSMEvent("discover server with higher term")
+	DiscoverCurrentLeaderOrNewTerm    = FSMEvent("discover current leader or new term")
+)
+
+// handler
+
+var (
+	StartsUpHandler = FSMHandler(func() FSMState {
+		return FollowerState
+	})
+	TimeOutStartsElectionHandler = FSMHandler(func() FSMState {
+		return CandidateState
+	})
+	TimeOutNewElectionHandler = FSMHandler(func() FSMState {
+		return CandidateState
+	})
+	ReceiveVotesFromMajoriryOfServersHandler = FSMHandler(func() FSMState {
+		return LeaderState
+	})
+	DiscoversServerWithHigherTermHandler = FSMHandler(func() FSMState {
+		return FollowerState
+	})
+	DiscoverCurrentLeaderOrNewTermHandler = FSMHandler(func() FSMState {
+		return FollowerState
+	})
+)
+
+func (f *FSM) Init() {
+	// starts up ->Follower
+	f.AddHandler(InitializedState, StartsUpEvent, StartsUpHandler)
+
+	// Follower -> candidate
+	f.AddHandler(FollowerState, TimeOutStartsElectionEvent, TimeOutStartsElectionHandler)
+
+	// Candidate
+	f.AddHandler(CandidateState, TimeOutNewElectionEvent, TimeOutNewElectionHandler)
+	f.AddHandler(CandidateState, ReceiveVotesFromMajorityOfServers, ReceiveVotesFromMajoriryOfServersHandler)
+	f.AddHandler(CandidateState, DiscoverCurrentLeaderOrNewTerm, DiscoverCurrentLeaderOrNewTermHandler)
+
+	// leader
+	f.AddHandler(LeaderState, DiscoversServerWithHigherTerm, DiscoversServerWithHigherTermHandler)
+}
