@@ -2,6 +2,7 @@ package raft
 
 import (
 	"log"
+	"time"
 )
 
 // Debugging
@@ -49,9 +50,38 @@ type AppendEntriesReply struct {
 	Success bool // 如果跟随者所含有的条目和prevLogIndex 以及 prevLogTerm 匹配上了，则为 true
 }
 
+func (rf *Raft) SendAppendEntriesToPeers(server int) {
+	preIndex := rf.NextIndex[server] - 1
+	args := &AppendEntriesArgs{
+		Term:         rf.CurrentTerm,
+		LeaderID:     rf.me,
+		PrevLogIndex: preIndex,
+		PrevLogTerm:  rf.Log[preIndex].Term,
+		Entries:      rf.Log[preIndex+1:],
+		LeaderCommit: rf.CommitIndex,
+	}
+	reply := &AppendEntriesReply{}
+	ok := rf.SendAppendEntries(server, args, reply)
+	if !ok {
+
+	}
+}
 func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	return ok
+	t := time.NewTimer(RPCTimeOut)
+	ch := make(chan bool, 1)
+
+	go func() {
+		ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+		ch <- ok
+	}()
+
+	select {
+	case <-t.C:
+		return false
+	case res := <-ch:
+		return res
+	}
+
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -61,21 +91,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
-	if len(rf.Log)-1 > args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
+	if len(rf.Log)-1 >= args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
 		// 根据raft 原理, 可知 prevLogIndex 之前的所有日志都能匹配上
-		var i, j int
-		for i, j = args.PrevLogIndex+1, 0; i < len(rf.Log) && j < len(args.Entries); i++ {
-			if rf.Log[i].Term == args.Entries[j].Term {
-				i++
-				j++
-			}
+		// 删除 preLogIndex 之后的所有日志
+		rf.Log = rf.Log[:args.PrevLogIndex+1]
+		i := 0
+		for i < len(args.Entries) {
+			rf.Log = append(rf.Log, args.Entries[i])
+			i++
 		}
-		// 删除 i 之后的日志
-		rf.Log = rf.Log[:i]
-		for j < len(args.Entries) {
-			rf.Log = append(rf.Log, args.Entries[j])
-			j++
-		}
+
 		if args.LeaderCommit > rf.CommitIndex {
 			rf.CommitIndex = Min(args.LeaderCommit, len(rf.Log)-1)
 		}
@@ -87,4 +112,34 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 }
 
-// 状态机实现 raft 状态转移
+func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
+	if len(rf.Log) == 1 {
+		// 没有日志
+		LastLogTerm = 0
+		LastLogIndex = 0
+		return
+	} else {
+		LastLogTerm = rf.Log[len(rf.Log)-1].Term
+		LastLogIndex = len(rf.Log) - 1
+		return
+	}
+}
+
+func (rf *Raft) ResetElectionTimeOut() {
+	rf.ElectionTimeoutTimer.Stop()
+	rf.ElectionTimeoutTimer.Reset(ElectionTimeOut)
+}
+
+func (rf *Raft) StartElection() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	rf.ResetElectionTimeOut()
+	if _, isLeader := rf.GetState(); isLeader {
+		return
+	}
+	// 开始选举
+	rf.CurrentTerm++
+	rf.StateMachine.SetState(CandidateState)
+	rf.sendRequestVoteToPeers()
+}

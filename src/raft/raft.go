@@ -21,6 +21,7 @@ import (
 	//	"bytes"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	//	"6.824/labgob"
 	"6.824/labrpc"
@@ -58,6 +59,9 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
+	ElectionTimeoutTimer *time.Timer //超时之后就会触发选举,election timeout 是 从follower 变成 candidate 的时间，也是candidate等待投票结束的时间,leader 没有选举超时的概念
+
+	HeartBeatTimoutTimer []*time.Timer // 超时之后就会触发发送心跳
 
 	// persistent state on all servers
 	CurrentTerm int       // 服务器已知最新的任期,初始化为0,线性增加
@@ -82,6 +86,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	rf.mu.Lock()
+	term = rf.CurrentTerm
+	rf.mu.Unlock()
+	isleader = rf.StateMachine.GetState() == LeaderState
 	return term, isleader
 }
 
@@ -165,12 +173,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		return
 	}
-	// 为什么只需index,term 相同就代表日志一样？
+
 	// 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他
-	if (rf.VotedFor == -1 || rf.VotedFor == args.CandidatedID) && args.LastLogIndex < len(rf.Log) && rf.Log[args.LastLogIndex].Term == args.LastLogTerm {
-		reply.VoteGranted = true
-		rf.VotedFor = args.CandidatedID
-		return
+	if rf.VotedFor == -1 || rf.VotedFor == args.CandidatedID {
+		if (rf.Log[len(rf.Log)-1].Term == args.LastLogTerm && len(rf.Log)-1 <= args.LastLogIndex) || (rf.Log[len(rf.Log)-1].Term < args.LastLogTerm) {
+			reply.VoteGranted = true
+			rf.VotedFor = args.CandidatedID
+			return
+		} else {
+			reply.VoteGranted = false
+			return
+		}
 	} else {
 		reply.VoteGranted = false
 		return
@@ -191,9 +204,76 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // is no need to implement your own timeouts around Call().
 
 // look at the comments in ../labrpc/labrpc.go for more details.
+func (rf *Raft) sendRequestVoteToPeers() {
+	var VoteGrantedCount int64 = 0
+	var resCount int64 = 0
+	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
+
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
+		go func(i int) {
+			LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
+			args := &RequestVoteArgs{
+				Term:         rf.CurrentTerm,
+				CandidatedID: rf.me,
+				LastLogTerm:  LastLogTerm,
+				LastLogIndex: LastLogIndex,
+			}
+			reply := &RequestVoteReply{}
+			ok := rf.sendRequestVote(i, args, reply)
+			ch <- reply
+			if !ok {
+				atomic.AddInt64(&resCount, 1)
+				return
+			}
+			if reply.Term > rf.CurrentTerm {
+				rf.CurrentTerm = reply.Term
+				// 当前raft 过期,假设 当前处于candidate
+				rf.StateMachine.SetState(FollowerState)
+			} else if reply.VoteGranted {
+				atomic.AddInt64(&VoteGrantedCount, 1)
+				atomic.AddInt64(&resCount, 1)
+			} else {
+				// 没有接收到 i 的投票
+				atomic.AddInt64(&resCount, 1)
+			}
+		}(i)
+	}
+
+	// 当还没有收到半数同意的票的时候
+	for int(VoteGrantedCount+1) <= len(rf.peers)/2 {
+		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
+			return
+		}
+	}
+
+	// 收到了半数以上同意的票
+	rf.StateMachine.SetState(LeaderState)
+}
+
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
+	t := time.NewTimer(RPCTimeOut)
+	ch := make(chan bool, 1)
+
+	go func() {
+		for i := 0; i < 10; i++ {
+			ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+			if !ok {
+				continue
+			} else {
+				ch <- ok
+				return
+			}
+		}
+	}()
+	select {
+	case <-t.C:
+		return false
+	case <-ch:
+		return true
+	}
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -240,19 +320,37 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
 
-		// Your code here to check if a leader election should
-		// be started and to randomize sleeping time using
-		// time.Sleep().
+	// 定时监听选举超时
+	go func() {
+		for rf.killed() == false {
+			select {
+			case <-rf.ElectionTimeoutTimer.C:
+				// 选举超时，开始触发选举
+				// 这里将leader和 candidate,follower 一起处理
+				rf.StartElection()
+			}
+		}
+	}()
 
+	// 定时发送心跳
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
+		go func() {
+			for rf.killed() == false {
+				select {
+				case <-rf.HeartBeatTimoutTimer[i].C:
+					rf.SendAppendEntries(i)
+				}
+			}
+		}()
 	}
 }
 
-// the service or tester wants to create a Raft server. the ports
-// of all the Raft servers (including this one) are in peers[]. this
-// server's port is peers[me]. all the servers' peers[] arrays
-// have the same order. persister is a place for this server to
+// the service or tester wants to create a Raft server.
+// persister is a place for this server to
 // save its persistent state, and also initially holds the most
 // recent saved state, if any. applyCh is a channel on which the
 // tester or service expects Raft to send ApplyMsg messages.
