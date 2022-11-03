@@ -50,7 +50,17 @@ type AppendEntriesReply struct {
 	Success bool // 如果跟随者所含有的条目和prevLogIndex 以及 prevLogTerm 匹配上了，则为 true
 }
 
+func (rf *Raft) ResetHeartBeatTimeOut(server int) {
+	rf.HeartBeatTimoutTimer[server].Stop()
+	rf.HeartBeatTimoutTimer[server].Reset(HeartBeatTimeOut)
+}
+
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
+	rf.ResetHeartBeatTimeOut(server)
+	if rf.StateMachine.GetState() != LeaderState {
+		return
+	}
+
 	preIndex := rf.NextIndex[server] - 1
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
@@ -62,8 +72,13 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	}
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
-	if !ok {
-
+	if ok {
+		if reply.Term > rf.CurrentTerm {
+			rf.mu.Lock()
+			rf.CurrentTerm = reply.Term
+			rf.mu.Unlock()
+			rf.StateMachine.SetState(FollowerState)
+		}
 	}
 }
 func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -85,24 +100,62 @@ func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	reply.Term = rf.CurrentTerm
 
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
 		return
+	} else if args.Term > rf.CurrentTerm {
+		rf.CurrentTerm = args.Term
+		rf.StateMachine.SetState(FollowerState)
 	}
+	// 心跳起作用
+	rf.ResetElectionTimeOut()
+
 	if len(rf.Log)-1 >= args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
 		// 根据raft 原理, 可知 prevLogIndex 之前的所有日志都能匹配上
-		// 删除 preLogIndex 之后的所有日志
-		rf.Log = rf.Log[:args.PrevLogIndex+1]
-		i := 0
-		for i < len(args.Entries) {
-			rf.Log = append(rf.Log, args.Entries[i])
-			i++
+		// 新日志的开始和结束索引
+		left := args.PrevLogIndex + 1
+		right := args.PrevLogIndex + len(args.Entries)
+		i := left
+		ok := true
+		for i = left; i <= right; i++ {
+			if i >= len(rf.Log) {
+				break
+			}
+			if rf.Log[i].Term == args.Entries[i-left].Term {
+				continue
+			} else {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			// 如果存在冲突条目，删除冲突条目及其后的所有日志
+			rf.Log = rf.Log[:i]
+			for j := i; j <= right; j++ {
+				rf.Log = append(rf.Log, args.Entries[j-left])
+			}
+		} else if i >= len(rf.Log) {
+			// 追加日志中尚未存在的任何新条目
+			for j := i; j <= right; j++ {
+				rf.Log = append(rf.Log, args.Entries[j-left])
+			}
 		}
 
+		// 上一个新条目的索引
+		// 假设冲突了 len(rf.Log)-1
+		// 没冲突并且后边有旧日志 i-1
+		// 没冲突并且后边没有旧日志 len(rf.Log)-1
 		if args.LeaderCommit > rf.CommitIndex {
-			rf.CommitIndex = Min(args.LeaderCommit, len(rf.Log)-1)
+			if ok && i > right {
+				rf.CommitIndex = Min(args.LeaderCommit, i-1)
+			} else {
+				rf.CommitIndex = Min(args.LeaderCommit, len(rf.Log)-1)
+			}
 		}
 		reply.Success = true
 		return
@@ -113,6 +166,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if len(rf.Log) == 1 {
 		// 没有日志
 		LastLogTerm = 0
@@ -126,14 +182,14 @@ func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
 }
 
 func (rf *Raft) ResetElectionTimeOut() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	rf.ElectionTimeoutTimer.Stop()
 	rf.ElectionTimeoutTimer.Reset(ElectionTimeOut)
 }
 
 func (rf *Raft) StartElection() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	rf.ResetElectionTimeOut()
 	if _, isLeader := rf.GetState(); isLeader {
 		return

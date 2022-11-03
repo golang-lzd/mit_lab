@@ -14,6 +14,8 @@ type FSM struct {
 }
 
 func (f *FSM) GetState() FSMState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.state
 }
 

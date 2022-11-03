@@ -65,7 +65,7 @@ type Raft struct {
 
 	// persistent state on all servers
 	CurrentTerm int       // 服务器已知最新的任期,初始化为0,线性增加
-	VotedFor    int       // 当前任期内收到选票的candidatedID
+	VotedFor    int       // 当前任期内收到选票的candidatedID，初始为-1
 	Log         []LogItem //log entries
 
 	// volatile state on all servers
@@ -89,6 +89,7 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	term = rf.CurrentTerm
 	rf.mu.Unlock()
+
 	isleader = rf.StateMachine.GetState() == LeaderState
 	return term, isleader
 }
@@ -159,11 +160,17 @@ type RequestVoteReply struct {
 	VoteGranted bool // 候选人赢得了此张选票时为真
 }
 
-// example RequestVote RPC handler.
+// RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if args.Term > rf.CurrentTerm {
+		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
 		rf.CurrentTerm = args.Term
+		rf.StateMachine.SetState(FollowerState)
+		rf.ResetElectionTimeOut()
 	}
 
 	reply.Term = rf.CurrentTerm
@@ -190,21 +197,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 }
 
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply.
-
-// If a reply arrives within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-
-// look at the comments in ../labrpc/labrpc.go for more details.
 func (rf *Raft) sendRequestVoteToPeers() {
+	rf.mu.Lock()
+	rf.VotedFor = rf.me
+	rf.mu.Unlock()
+
 	var VoteGrantedCount int64 = 0
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
@@ -229,7 +226,9 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				return
 			}
 			if reply.Term > rf.CurrentTerm {
+				rf.mu.Lock()
 				rf.CurrentTerm = reply.Term
+				rf.mu.Unlock()
 				// 当前raft 过期,假设 当前处于candidate
 				rf.StateMachine.SetState(FollowerState)
 			} else if reply.VoteGranted {
@@ -244,13 +243,19 @@ func (rf *Raft) sendRequestVoteToPeers() {
 
 	// 当还没有收到半数同意的票的时候
 	for int(VoteGrantedCount+1) <= len(rf.peers)/2 {
-		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
+		// 中间有可能出现状态转变
+		if rf.StateMachine.GetState() != CandidateState {
 			return
+		}
+		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
+			break
 		}
 	}
 
 	// 收到了半数以上同意的票
-	rf.StateMachine.SetState(LeaderState)
+	if int(VoteGrantedCount+1) > len(rf.peers)/2 {
+		rf.StateMachine.SetState(LeaderState)
+	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -328,6 +333,16 @@ func (rf *Raft) ticker() {
 			case <-rf.ElectionTimeoutTimer.C:
 				// 选举超时，开始触发选举
 				// 这里将leader和 candidate,follower 一起处理
+
+				// command list:
+				// 1. 首先清空计时器
+				// 2. 判断当前状态是follower or candidate
+				// 3. 更新Term 和 状态
+				// 4. 开始请求投票流程:
+				// 4-1. 首先给自己投票
+				// 4-2 	如果接收到大多数服务器的选票，那么就变成领导人
+				//		如果接收到来自新的领导人的附加日志（AppendEntries）RPC，则转变成跟随者 => 检测状态是否发生了变化
+				//		如果选举过程超时，则再次发起一轮选举 => 上一轮的选举此时大概率已经结束返回，因为设定了RPC Timeout 为100ms,通过并发保证了总处理时间小于300ms
 				rf.StartElection()
 			}
 		}
@@ -338,14 +353,18 @@ func (rf *Raft) ticker() {
 		if i == rf.me {
 			continue
 		}
-		go func() {
+		go func(i int) {
 			for rf.killed() == false {
 				select {
 				case <-rf.HeartBeatTimoutTimer[i].C:
-					rf.SendAppendEntries(i)
+					// command list:
+					// 1. 首先清空计时器
+					// 2. 判断当前状态是否是leader ?
+
+					rf.SendAppendEntriesToPeers(i)
 				}
 			}
-		}()
+		}(i)
 	}
 }
 
