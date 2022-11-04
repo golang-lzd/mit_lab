@@ -223,13 +223,13 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				atomic.AddInt64(&resCount, 1)
 				return
 			}
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
 			if reply.Term > rf.CurrentTerm {
-				rf.mu.Lock()
 				rf.CurrentTerm = reply.Term
 				// 当前raft 过期,假设 当前处于candidate
 				rf.StateMachine.SetState(FollowerState)
 				rf.VotedFor = -1
-				rf.mu.Unlock()
 			} else if reply.VoteGranted {
 				log.Println(rf.WithState("收到 node-%d 的投票", i))
 				atomic.AddInt64(&VoteGrantedCount, 1)
@@ -242,7 +242,8 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	}
 
 	// 当还没有收到半数同意的票的时候
-	for int(VoteGrantedCount+1) <= len(rf.peers)/2 {
+
+	for int(atomic.LoadInt64(&VoteGrantedCount)+1) <= len(rf.peers)/2 {
 		// 中间有可能出现状态转变
 		if rf.StateMachine.GetState() != CandidateState {
 			return

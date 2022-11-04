@@ -102,7 +102,6 @@ func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	case res := <-ch:
 		return res
 	}
-
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
