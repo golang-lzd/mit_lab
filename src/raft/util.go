@@ -60,6 +60,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	if rf.StateMachine.GetState() != LeaderState {
 		return
 	}
+	log.Printf("[StartAppendEntriesToPeers-%d]心跳超时，开始发送心跳给所有peers \n", rf.me)
 
 	preIndex := rf.NextIndex[server] - 1
 	args := &AppendEntriesArgs{
@@ -193,10 +194,11 @@ func (rf *Raft) StartElection() {
 	if _, isLeader := rf.GetState(); isLeader {
 		return
 	}
+	log.Printf("[ticker-%d]选举超时,开始执行startElection \n", rf.me)
+
 	// 开始选举
 	rf.CurrentTerm++
 	rf.VotedFor = -1
-	rf.mu.Unlock()
 	rf.StateMachine.SetState(CandidateState)
 	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()

@@ -386,8 +386,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.StateMachine = NewFSM(FollowerState)
 	rf.ElectionTimeoutTimer = time.NewTimer(ElectionTimeOut)
+	rf.HeartBeatTimoutTimer = make([]*time.Timer, 0)
 	for i := 0; i < len(peers); i++ {
-		rf.HeartBeatTimoutTimer[i] = time.NewTimer(HeartBeatTimeOut)
+		rf.HeartBeatTimoutTimer = append(rf.HeartBeatTimoutTimer, time.NewTimer(HeartBeatTimeOut))
 	}
 	rf.CurrentTerm = 0
 	rf.VotedFor = -1
