@@ -50,7 +50,7 @@ type ApplyMsg struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	StateMachine FSM
+	StateMachine *FSM
 
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
@@ -59,7 +59,7 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
-	ElectionTimeoutTimer *time.Timer //超时之后就会触发选举,election timeout 是 从follower 变成 candidate 的时间，也是candidate等待投票结束的时间,leader 没有选举超时的概念
+	ElectionTimeoutTimer *time.Timer // 超时之后就会触发选举,election timeout 是 从follower 变成 candidate 的时间，也是candidate等待投票结束的时间,leader 没有选举超时的概念
 
 	HeartBeatTimoutTimer []*time.Timer // 超时之后就会触发发送心跳
 
@@ -86,10 +86,7 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-	rf.mu.Lock()
 	term = rf.CurrentTerm
-	rf.mu.Unlock()
-
 	isleader = rf.StateMachine.GetState() == LeaderState
 	return term, isleader
 }
@@ -170,6 +167,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
+		rf.VotedFor = -1
 		rf.ResetElectionTimeOut()
 	}
 
@@ -211,7 +209,9 @@ func (rf *Raft) sendRequestVoteToPeers() {
 			continue
 		}
 		go func(i int) {
+			rf.mu.Lock()
 			LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
+			rf.mu.Unlock()
 			args := &RequestVoteArgs{
 				Term:         rf.CurrentTerm,
 				CandidatedID: rf.me,
@@ -228,9 +228,10 @@ func (rf *Raft) sendRequestVoteToPeers() {
 			if reply.Term > rf.CurrentTerm {
 				rf.mu.Lock()
 				rf.CurrentTerm = reply.Term
-				rf.mu.Unlock()
 				// 当前raft 过期,假设 当前处于candidate
 				rf.StateMachine.SetState(FollowerState)
+				rf.VotedFor = -1
+				rf.mu.Unlock()
 			} else if reply.VoteGranted {
 				atomic.AddInt64(&VoteGrantedCount, 1)
 				atomic.AddInt64(&resCount, 1)
@@ -383,6 +384,22 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.StateMachine = NewFSM(FollowerState)
+	rf.ElectionTimeoutTimer = time.NewTimer(ElectionTimeOut)
+	for i := 0; i < len(peers); i++ {
+		rf.HeartBeatTimoutTimer[i] = time.NewTimer(HeartBeatTimeOut)
+	}
+	rf.CurrentTerm = 0
+	rf.VotedFor = -1
+	rf.Log = []LogItem{{Term: 0, Command: "None"}}
+	rf.CommitIndex = 0
+	rf.LastApplied = 0
+	rf.NextIndex = make([]int, 0)
+	rf.MatchIndex = make([]int, 0)
+	for i := 0; i < len(peers); i++ {
+		rf.NextIndex = append(rf.NextIndex, 1)
+		rf.MatchIndex = append(rf.MatchIndex, 0)
+	}
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

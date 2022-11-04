@@ -108,9 +108,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
 		return
-	} else if args.Term > rf.CurrentTerm {
+	} else if args.Term >= rf.CurrentTerm {
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
+		rf.VotedFor = -1
 	}
 	// 心跳起作用
 	rf.ResetElectionTimeOut()
@@ -166,8 +167,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 
 	if len(rf.Log) == 1 {
 		// 没有日志
@@ -182,20 +183,21 @@ func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
 }
 
 func (rf *Raft) ResetElectionTimeOut() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	rf.ElectionTimeoutTimer.Stop()
 	rf.ElectionTimeoutTimer.Reset(ElectionTimeOut)
 }
 
 func (rf *Raft) StartElection() {
+	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if _, isLeader := rf.GetState(); isLeader {
 		return
 	}
 	// 开始选举
 	rf.CurrentTerm++
+	rf.VotedFor = -1
+	rf.mu.Unlock()
 	rf.StateMachine.SetState(CandidateState)
+	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()
 }
