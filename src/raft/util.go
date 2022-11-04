@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"time"
 )
@@ -13,6 +14,11 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 		log.Printf(format, a...)
 	}
 	return
+}
+
+func (rf *Raft) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, _s)
 }
 
 func Min(a, b int) int {
@@ -60,8 +66,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	if rf.StateMachine.GetState() != LeaderState {
 		return
 	}
-	log.Printf("[StartAppendEntriesToPeers-%d]心跳超时，开始发送心跳给所有peers \n", rf.me)
-
+	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
@@ -102,7 +107,9 @@ func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 
 	reply.Term = rf.CurrentTerm
 
@@ -168,9 +175,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
-	//rf.mu.Lock()
-	//defer rf.mu.Unlock()
-
 	if len(rf.Log) == 1 {
 		// 没有日志
 		LastLogTerm = 0
@@ -185,21 +189,23 @@ func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
 
 func (rf *Raft) ResetElectionTimeOut() {
 	rf.ElectionTimeoutTimer.Stop()
-	rf.ElectionTimeoutTimer.Reset(ElectionTimeOut)
+	rf.ElectionTimeoutTimer.Reset(GetElectionTimeOut())
 }
 
 func (rf *Raft) StartElection() {
 	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if _, isLeader := rf.GetState(); isLeader {
+		rf.mu.Unlock()
 		return
 	}
-	log.Printf("[ticker-%d]选举超时,开始执行startElection \n", rf.me)
-
 	// 开始选举
+	// 如果是Follower -> candidate,
+	// 如果是candidate -> candidate
 	rf.CurrentTerm++
-	rf.VotedFor = -1
 	rf.StateMachine.SetState(CandidateState)
+	rf.VotedFor = rf.me
+	log.Println(rf.WithState("选举超时,开始执行startElection \n"))
 	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()
 }

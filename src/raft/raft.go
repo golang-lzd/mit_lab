@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"log"
 	//	"bytes"
 	"sync"
 	"sync/atomic"
@@ -165,6 +166,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.CurrentTerm {
 		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
+		log.Println(rf.WithState("Term: %d->%d 接收到较大Term,重置选举超时", rf.CurrentTerm, args.Term))
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
@@ -196,10 +198,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) sendRequestVoteToPeers() {
-	rf.mu.Lock()
-	rf.VotedFor = rf.me
-	rf.mu.Unlock()
-
 	var VoteGrantedCount int64 = 0
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
@@ -233,6 +231,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				rf.VotedFor = -1
 				rf.mu.Unlock()
 			} else if reply.VoteGranted {
+				log.Println(rf.WithState("收到 node-%d 的投票", i))
 				atomic.AddInt64(&VoteGrantedCount, 1)
 				atomic.AddInt64(&resCount, 1)
 			} else {
@@ -255,6 +254,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 
 	// 收到了半数以上同意的票
 	if int(VoteGrantedCount+1) > len(rf.peers)/2 {
+		log.Println(rf.WithState("收到半数以上票，成为leader"))
 		rf.StateMachine.SetState(LeaderState)
 	}
 }
@@ -385,7 +385,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.StateMachine = NewFSM(FollowerState)
-	rf.ElectionTimeoutTimer = time.NewTimer(ElectionTimeOut)
+	rf.ElectionTimeoutTimer = time.NewTimer(GetElectionTimeOut())
 	rf.HeartBeatTimoutTimer = make([]*time.Timer, 0)
 	for i := 0; i < len(peers); i++ {
 		rf.HeartBeatTimoutTimer = append(rf.HeartBeatTimoutTimer, time.NewTimer(HeartBeatTimeOut))

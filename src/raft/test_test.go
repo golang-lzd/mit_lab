@@ -9,10 +9,11 @@ package raft
 //
 
 import (
+	"fmt"
 	"log"
+	"os"
 	"testing"
 )
-import "fmt"
 import "time"
 import "math/rand"
 import "sync/atomic"
@@ -22,10 +23,17 @@ import "sync"
 // (much more than the paper's range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
-func TestInitialElection2A(t *testing.T) {
-	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	log.SetFlags(log.Lshortfile | log.LstdFlags)
+func init() {
+	f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.Lshortfile | log.LstdFlags | log.Lmicroseconds)
+}
 
+func TestInitialElection2A(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -54,9 +62,11 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	cfg.end()
+	log.Printf("TestInitialElection2A Passed\n\n")
 }
 
 func TestReElection2A(t *testing.T) {
+	log.Printf("[TestReElection2A] Begin.\n\n")
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -67,18 +77,21 @@ func TestReElection2A(t *testing.T) {
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
+	log.Printf("kill 掉了 %d\n", leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
+	log.Printf("重新连通了 %d\n", leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
+	log.Printf("kill 掉了 %d %d \n\n", leader2, (leader2+1)%servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
 	// check that the one connected server
@@ -87,16 +100,20 @@ func TestReElection2A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
+	log.Printf("重新连通了 raft-%d \n", (leader2+1)%servers)
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
+	log.Printf("重新连通了 raft-%d \n", leader2)
 	cfg.checkOneLeader()
 
 	cfg.end()
+	log.Printf("TestReElection2A Passed\n\n")
 }
 
 func TestManyElections2A(t *testing.T) {
+	log.Printf("[TestManyElections2A] Begin.\n\n")
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -127,6 +144,7 @@ func TestManyElections2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	cfg.end()
+	log.Printf("[TestManyElections2A] Passed.\n\n")
 }
 
 func TestBasicAgree2B(t *testing.T) {
@@ -152,10 +170,8 @@ func TestBasicAgree2B(t *testing.T) {
 	cfg.end()
 }
 
-//
 // check, based on counting bytes of RPCs, that
 // each command is sent to each peer just once.
-//
 func TestRPCBytes2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -187,9 +203,7 @@ func TestRPCBytes2B(t *testing.T) {
 	cfg.end()
 }
 
-//
 // test just failure of followers.
-//
 func For2023TestFollowerFailure2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -234,9 +248,7 @@ func For2023TestFollowerFailure2B(t *testing.T) {
 	cfg.end()
 }
 
-//
 // test just failure of leaders.
-//
 func For2023TestLeaderFailure2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -276,10 +288,8 @@ func For2023TestLeaderFailure2B(t *testing.T) {
 	cfg.end()
 }
 
-//
 // test that a follower participates after
 // disconnect and re-connect.
-//
 func TestFailAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -808,7 +818,6 @@ func TestPersist32C(t *testing.T) {
 	cfg.end()
 }
 
-//
 // Test the scenarios described in Figure 8 of the extended Raft paper. Each
 // iteration asks a leader, if there is one, to insert a command in the Raft
 // log.  If there is a leader, that leader will fail quickly with a high
@@ -817,7 +826,6 @@ func TestPersist32C(t *testing.T) {
 // alive servers isn't enough to form a majority, perhaps start a new server.
 // The leader in a new term may try to finish replicating log entries that
 // haven't been committed yet.
-//
 func TestFigure82C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, false, false)
@@ -1198,11 +1206,9 @@ func TestSnapshotInstallUnCrash2D(t *testing.T) {
 	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
 }
 
-//
 // do the servers persist the snapshots, and
 // restart using snapshot along with the
 // tail of the log?
-//
 func TestSnapshotAllCrash2D(t *testing.T) {
 	servers := 3
 	iters := 5
