@@ -86,6 +86,8 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	var term int
 	var isleader bool
@@ -248,16 +250,12 @@ func (rf *Raft) sendRequestVoteToPeers() {
 
 	for int(atomic.LoadInt64(&VoteGrantedCount)+1) <= len(rf.peers)/2 {
 		// 中间有可能出现状态转变
-		rf.mu.Lock()
 		if rf.StateMachine.GetState() != CandidateState {
-			rf.mu.Unlock()
 			return
 		}
 		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
-			rf.mu.Unlock()
 			break
 		}
-		rf.mu.Unlock()
 	}
 
 	// 收到了半数以上同意的票
@@ -319,12 +317,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term := -1
 	isLeader := true
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	if rf.StateMachine.GetState() != LeaderState {
 		return -1, rf.CurrentTerm, false
 	}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	rf.Log = append(rf.Log, LogItem{
 		Term:    rf.CurrentTerm,

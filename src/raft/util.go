@@ -73,12 +73,9 @@ func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
-	rf.mu.Lock()
 	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
-		rf.mu.Unlock()
 		return
 	}
-	rf.mu.Unlock()
 	rf.mu.Lock()
 	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
@@ -101,15 +98,14 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	if ok {
 		// 根据raft 原理可知，失败有两种情况,一种是Term 较小，另一种是日志不对应
 		if !reply.Success {
+			rf.mu.Lock()
 			if reply.Term > rf.CurrentTerm {
-				rf.mu.Lock()
 				rf.CurrentTerm = reply.Term
 				rf.mu.Unlock()
 				rf.StateMachine.SetState(FollowerState)
 				rf.ResetElectionTimeOut()
 				return
 			} else {
-				rf.mu.Lock()
 				rf.NextIndex[server] = reply.NextLogIndex
 				rf.ResetHeartBeatTimeOutZeros(server)
 				rf.mu.Unlock()
@@ -293,12 +289,11 @@ func (rf *Raft) ResetElectionTimeOut() {
 }
 
 func (rf *Raft) StartElection() {
-	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if _, isLeader := rf.GetState(); isLeader {
-		rf.mu.Unlock()
 		return
 	}
+	rf.mu.Lock()
 	// 开始选举
 	// 如果是Follower -> candidate,
 	// 如果是candidate -> candidate
