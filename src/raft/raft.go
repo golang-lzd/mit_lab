@@ -53,13 +53,16 @@ type ApplyMsg struct {
 type Raft struct {
 	StateMachine *FSM
 
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
-
+	mu            sync.Mutex          // Lock to protect shared access to this peer's state
+	peers         []*labrpc.ClientEnd // RPC end points of all peers
+	persister     *Persister          // Object to hold this peer's persisted state
+	me            int                 // this peer's index into peers[]
+	dead          int32               // set by Kill()
+	applyCh       chan ApplyMsg
+	notifyApplyCh chan struct{}
 	// Your data here (2A, 2B, 2C).
+	ApplyMsgTimer *time.Timer //定时去应用日志
+
 	ElectionTimeoutTimer *time.Timer // 超时之后就会触发选举,election timeout 是 从follower 变成 candidate 的时间，也是candidate等待投票结束的时间,leader 没有选举超时的概念
 
 	HeartBeatTimoutTimer []*time.Timer // 超时之后就会触发发送心跳
@@ -300,6 +303,27 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term := -1
 	isLeader := true
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.StateMachine.GetState() != LeaderState {
+		return -1, rf.CurrentTerm, false
+	}
+
+	rf.Log = append(rf.Log, LogItem{
+		Term:    rf.CurrentTerm,
+		Command: command,
+	})
+	rf.NextIndex[rf.me] = len(rf.Log)
+	rf.MatchIndex[rf.me] = len(rf.Log) - 1
+
+	for i := 0; i < len(rf.peers); i++ {
+		rf.ResetHeartBeatTimeOutZeros(i)
+	}
+	index = len(rf.Log) - 1
+	term = rf.CurrentTerm
+
+	log.Println(rf.WithState("收到命令，%v", command))
 	// Your code here (2B).
 
 	return index, term, isLeader
@@ -327,7 +351,18 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-
+	// 定时应用日志
+	go func() {
+		for rf.killed() == false {
+			select {
+			case <-rf.ApplyMsgTimer.C:
+				rf.notifyApplyCh <- struct{}{}
+				rf.ResetApplyMsgTimeOut()
+			case <-rf.notifyApplyCh:
+				rf.StartApplyLogs()
+			}
+		}
+	}()
 	// 定时监听选举超时
 	go func() {
 		for rf.killed() == false {
@@ -386,6 +421,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.StateMachine = NewFSM(FollowerState)
+	rf.ApplyMsgTimer = time.NewTimer(ApplyMsgTimeOut)
 	rf.ElectionTimeoutTimer = time.NewTimer(GetElectionTimeOut())
 	rf.HeartBeatTimoutTimer = make([]*time.Timer, 0)
 	for i := 0; i < len(peers); i++ {
@@ -402,6 +438,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.NextIndex = append(rf.NextIndex, 1)
 		rf.MatchIndex = append(rf.MatchIndex, 0)
 	}
+
+	rf.applyCh = make(chan ApplyMsg, 100)
+	rf.notifyApplyCh = make(chan struct{}, 100)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

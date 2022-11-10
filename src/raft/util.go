@@ -6,16 +6,6 @@ import (
 	"time"
 )
 
-// Debugging
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 func (rf *Raft) WithState(format string, a ...interface{}) string {
 	_s := fmt.Sprintf(format, a...)
 	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, _s)
@@ -54,11 +44,32 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int  // 当前任期，对于领导人而言，他会更新自己的任期
 	Success bool // 如果跟随者所含有的条目和prevLogIndex 以及 prevLogTerm 匹配上了，则为 true
+	//
+	NextLogIndex int
+	NextLogTerm  int
+}
+
+func (rf *Raft) ResetApplyMsgTimeOut() {
+	rf.ApplyMsgTimer.Stop()
+	rf.ApplyMsgTimer.Reset(ApplyMsgTimeOut)
+}
+
+func (rf *Raft) ResetHeartBeatTimeOutZeros(server int) {
+	rf.HeartBeatTimoutTimer[server].Stop()
+	rf.HeartBeatTimoutTimer[server].Reset(0 * time.Second)
 }
 
 func (rf *Raft) ResetHeartBeatTimeOut(server int) {
 	rf.HeartBeatTimoutTimer[server].Stop()
 	rf.HeartBeatTimoutTimer[server].Reset(HeartBeatTimeOut)
+}
+
+func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
+	res := make([]LogItem, 0)
+	for i := preIndex; i < len(rf.Log); i++ {
+		res = append(res, rf.Log[i])
+	}
+	return res
 }
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
@@ -68,22 +79,43 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	}
 	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
+
+	rf.mu.Lock()
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
 		LeaderID:     rf.me,
 		PrevLogIndex: preIndex,
 		PrevLogTerm:  rf.Log[preIndex].Term,
-		Entries:      rf.Log[preIndex+1:],
+		Entries:      rf.GetSendEntriesDeepCopy(preIndex),
 		LeaderCommit: rf.CommitIndex,
 	}
+	rf.mu.Unlock()
+
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if ok {
-		if reply.Term > rf.CurrentTerm {
+		// 根据raft 原理可知，失败有两种情况,一种是Term 较小，另一种是日志不对应
+		if !reply.Success {
+			if reply.Term > rf.CurrentTerm {
+				rf.mu.Lock()
+				rf.CurrentTerm = reply.Term
+				rf.mu.Unlock()
+				rf.StateMachine.SetState(FollowerState)
+				rf.ResetElectionTimeOut()
+				return
+			} else {
+				rf.mu.Lock()
+				rf.NextIndex[server] = reply.NextLogIndex
+				rf.ResetHeartBeatTimeOutZeros(server)
+				rf.mu.Unlock()
+			}
+		} else {
+			// 更新nextIndex,matchIndex
 			rf.mu.Lock()
-			rf.CurrentTerm = reply.Term
+			rf.NextIndex[server] = rf.NextIndex[server] + len(args.Entries)
+			rf.MatchIndex[server] = rf.NextIndex[server] + len(args.Entries) - 1
 			rf.mu.Unlock()
-			rf.StateMachine.SetState(FollowerState)
+			rf.TryCommit()
 		}
 	}
 }
@@ -168,8 +200,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = true
 		return
 	} else {
+		// 假设日志不符合
 		reply.Success = false
-		return
+		if len(rf.Log)-1 < args.PrevLogIndex {
+			// 日志不够
+			reply.NextLogIndex = len(rf.Log)
+			return
+		} else {
+			// 日志 Term 不符合,每次-1
+			reply.NextLogIndex = args.PrevLogIndex
+			return
+		}
 	}
 }
 
@@ -184,6 +225,50 @@ func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
 		LastLogIndex = len(rf.Log) - 1
 		return
 	}
+}
+
+// 如果commitIndex > lastApplied，则 lastApplied 递增，并将log[lastApplied]应用到状态机中
+
+func (rf *Raft) StartApplyLogs() {
+	for i := rf.LastApplied; i <= rf.CommitIndex; i++ {
+		applyMsg := ApplyMsg{
+			CommandValid: true,
+			Command:      rf.Log[i].Command,
+			CommandIndex: i,
+		}
+		rf.applyCh <- applyMsg
+	}
+	rf.LastApplied = rf.CommitIndex
+}
+
+func (rf *Raft) TryCommit() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	preCommitIndex := rf.CommitIndex
+	for i := rf.CommitIndex + 1; i < len(rf.Log); i++ {
+		// 假设存在 N 满足N > commitIndex，使得大多数的 matchIndex[i] ≥ N以及log[N].term == currentTerm 成立，则令 commitIndex = N
+		if rf.Log[i].Term != rf.CurrentTerm {
+			continue
+		}
+		count := 0
+		for j := 0; j < len(rf.peers); j++ {
+			if i <= rf.MatchIndex[j] {
+				count++
+			}
+		}
+		if count > len(rf.peers)/2 {
+			rf.CommitIndex = i
+		}
+	}
+	if rf.CommitIndex > preCommitIndex {
+		rf.notifyApplyCh <- struct{}{}
+	}
+
+}
+func (rf *Raft) ResetElectionTimeOutZeros() {
+	rf.ElectionTimeoutTimer.Stop()
+	rf.ElectionTimeoutTimer.Reset(0 * time.Second)
 }
 
 func (rf *Raft) ResetElectionTimeOut() {

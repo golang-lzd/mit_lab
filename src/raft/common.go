@@ -16,6 +16,7 @@ const (
 	ElectionTimeOut  = 300 * time.Millisecond
 	HeartBeatTimeOut = 150 * time.Millisecond
 	RPCTimeOut       = 100 * time.Millisecond
+	ApplyMsgTimeOut  = 50 * time.Millisecond
 )
 
 func GetElectionTimeOut() time.Duration {
