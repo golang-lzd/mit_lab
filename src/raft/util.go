@@ -230,16 +230,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
-	if len(rf.Log) == 1 {
-		// 没有日志
-		LastLogTerm = 0
-		LastLogIndex = 0
-		return
-	} else {
-		LastLogTerm = rf.Log[len(rf.Log)-1].Term
-		LastLogIndex = len(rf.Log) - 1
-		return
-	}
+	LastLogTerm = rf.Log[len(rf.Log)-1].Term
+	LastLogIndex = len(rf.Log) - 1
+	return
 }
 
 // 如果commitIndex > lastApplied，则 lastApplied 递增，并将log[lastApplied]应用到状态机中
