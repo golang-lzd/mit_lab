@@ -73,9 +73,12 @@ func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
+	rf.mu.Lock()
 	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
+		rf.mu.Unlock()
 		return
 	}
+	rf.mu.Unlock()
 	rf.mu.Lock()
 	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1

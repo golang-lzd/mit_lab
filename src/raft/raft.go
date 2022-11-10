@@ -248,12 +248,16 @@ func (rf *Raft) sendRequestVoteToPeers() {
 
 	for int(atomic.LoadInt64(&VoteGrantedCount)+1) <= len(rf.peers)/2 {
 		// 中间有可能出现状态转变
+		rf.mu.Lock()
 		if rf.StateMachine.GetState() != CandidateState {
+			rf.mu.Unlock()
 			return
 		}
 		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
+			rf.mu.Unlock()
 			break
 		}
+		rf.mu.Unlock()
 	}
 
 	// 收到了半数以上同意的票
