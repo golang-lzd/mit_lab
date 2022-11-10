@@ -2,7 +2,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -91,7 +90,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		LeaderCommit: rf.CommitIndex,
 	}
 	rf.mu.Unlock()
-	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
+	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if ok {
@@ -165,54 +164,54 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.CommitIndex = args.LeaderCommit
 				rf.notifyApplyCh <- struct{}{}
 			}
+			reply.NextLogIndex = args.PrevLogIndex + 1
 			reply.Success = true
 			return
 		} else {
-			// 根据raft 原理, 可知 prevLogIndex 之前的所有日志都能匹配上
-			// 新日志的开始和结束索引
-			left := args.PrevLogIndex + 1
-			right := args.PrevLogIndex + len(args.Entries)
-			i := left
-			ok := true
-			for i = left; i <= right; i++ {
-				if i >= len(rf.Log) {
-					break
+			if len(args.Entries)+args.PrevLogIndex >= len(rf.Log)-1 {
+				rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
+				if rf.CommitIndex < args.LeaderCommit {
+					// 这里可以推断: 上一个新日志的索引为prevLogIndex,当len(entries)=0时，prevLogIndex 就是leader 的最后一个日志记录
+					// 所以 leaderCommit 一定小于等于prevLogIndex.
+					rf.CommitIndex = args.LeaderCommit
+					rf.notifyApplyCh <- struct{}{}
 				}
-				if rf.Log[i].Term == args.Entries[i-left].Term {
-					continue
-				} else {
-					ok = false
-					break
+				reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
+				reply.Success = true
+				return
+			} else {
+				// 根据raft 原理, 可知 prevLogIndex 之前的所有日志都能匹配上
+				// 新日志的开始和结束索引
+				left := args.PrevLogIndex + 1
+				right := args.PrevLogIndex + len(args.Entries)
+				i := left
+				ok := true
+				for i = left; i <= right; i++ {
+					if rf.Log[i].Term == args.Entries[i-left].Term {
+						continue
+					} else {
+						ok = false
+						break
+					}
 				}
-			}
-			if !ok {
-				// 如果存在冲突条目，删除冲突条目及其后的所有日志
-				rf.Log = rf.Log[:i]
-				for j := i; j <= right; j++ {
-					rf.Log = append(rf.Log, args.Entries[j-left])
+				if !ok {
+					// 如果存在冲突条目，删除冲突条目及其后的所有日志
+					rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
 				}
-			} else if i >= len(rf.Log) {
-				// 追加日志中尚未存在的任何新条目
-				for j := i; j <= right; j++ {
-					rf.Log = append(rf.Log, args.Entries[j-left])
+				// 上一个新条目的索引
+				// 假设冲突了 len(rf.Log)-1
+				// 没冲突并且后边有旧日志 i-1
+				// 没冲突并且后边没有旧日志 len(rf.Log)-1
+				if args.LeaderCommit > rf.CommitIndex {
+					rf.CommitIndex = Min(right, args.LeaderCommit)
+					rf.notifyApplyCh <- struct{}{}
 				}
+				//log.Println(rf.WithState("当前日志为:%v", FormatStruct(rf.Log)))
+				reply.Success = true
+				reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
+				return
 			}
 
-			// 上一个新条目的索引
-			// 假设冲突了 len(rf.Log)-1
-			// 没冲突并且后边有旧日志 i-1
-			// 没冲突并且后边没有旧日志 len(rf.Log)-1
-			if args.LeaderCommit > rf.CommitIndex {
-				if ok && i > right {
-					rf.CommitIndex = Min(args.LeaderCommit, i-1)
-				} else {
-					rf.CommitIndex = Min(args.LeaderCommit, len(rf.Log)-1)
-				}
-				rf.notifyApplyCh <- struct{}{}
-			}
-			log.Println(rf.WithState("当前日志为:%v", FormatStruct(rf.Log)))
-			reply.Success = true
-			return
 		}
 
 	} else {
@@ -308,7 +307,7 @@ func (rf *Raft) StartElection() {
 	rf.CurrentTerm++
 	rf.StateMachine.SetState(CandidateState)
 	rf.VotedFor = rf.me
-	log.Println(rf.WithState("选举超时,开始执行startElection \n"))
+	//log.Println(rf.WithState("选举超时,开始执行startElection \n"))
 	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()
 }

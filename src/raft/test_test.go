@@ -24,7 +24,8 @@ import "sync"
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func init() {
-	f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+	//f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+	f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR, os.ModePerm)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
@@ -583,6 +584,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
+	log.Println("---------------------------")
 }
 
 func TestCount2B(t *testing.T) {
