@@ -76,8 +76,10 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
 		return
 	}
+	rf.mu.Lock()
 	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
+	rf.mu.Unlock()
 
 	rf.mu.Lock()
 	//log.Println(rf.WithState("server:%d len(log):%d preIndex:%d rf.NextIndex[server]:%d", server, len(rf.Log), preIndex, rf.NextIndex[server]))

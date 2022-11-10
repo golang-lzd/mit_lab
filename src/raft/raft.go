@@ -257,17 +257,20 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	}
 
 	// 收到了半数以上同意的票
-	if int(VoteGrantedCount+1) > len(rf.peers)/2 {
+	if int(atomic.LoadInt64(&VoteGrantedCount)+1) > len(rf.peers)/2 {
 		log.Println(rf.WithState("收到半数以上票，成为leader"))
 		rf.StateMachine.SetState(LeaderState)
 		// 成为leader 后需要更新的状态
 		for i := 0; i < len(rf.peers); i++ {
+			rf.mu.Lock()
 			if i == rf.me {
 				rf.NextIndex[i] = len(rf.Log)
+				rf.mu.Unlock()
 				continue
 			}
 			rf.NextIndex[i] = len(rf.Log)
 			rf.MatchIndex[i] = 0
+			rf.mu.Unlock()
 		}
 	}
 }
