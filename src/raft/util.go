@@ -66,7 +66,7 @@ func (rf *Raft) ResetHeartBeatTimeOut(server int) {
 
 func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
 	res := make([]LogItem, 0)
-	for i := preIndex; i < len(rf.Log); i++ {
+	for i := preIndex + 1; i < len(rf.Log); i++ {
 		res = append(res, rf.Log[i])
 	}
 	return res
@@ -74,13 +74,14 @@ func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
-	if rf.StateMachine.GetState() != LeaderState {
+	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
 		return
 	}
-	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
+	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
 
 	rf.mu.Lock()
+	//log.Println(rf.WithState("server:%d len(log):%d preIndex:%d rf.NextIndex[server]:%d", server, len(rf.Log), preIndex, rf.NextIndex[server]))
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
 		LeaderID:     rf.me,
@@ -90,7 +91,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		LeaderCommit: rf.CommitIndex,
 	}
 	rf.mu.Unlock()
-
+	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server))
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if ok {
