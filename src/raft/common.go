@@ -1,6 +1,9 @@
 package raft
 
 import (
+	"bytes"
+	"encoding/json"
+	"log"
 	"math/rand"
 	"time"
 )
@@ -21,4 +24,14 @@ const (
 
 func GetElectionTimeOut() time.Duration {
 	return ElectionTimeOut + time.Duration(rand.Int())%(30*time.Millisecond)
+}
+
+func FormatStruct(s interface{}) string {
+	bs, err := json.Marshal(s)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	var out bytes.Buffer
+	json.Indent(&out, bs, "", "\t")
+	return out.String()
 }

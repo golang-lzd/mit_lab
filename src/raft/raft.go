@@ -418,7 +418,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-
+	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
 	rf.StateMachine = NewFSM(FollowerState)
 	rf.ApplyMsgTimer = time.NewTimer(ApplyMsgTimeOut)
@@ -439,7 +439,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.MatchIndex = append(rf.MatchIndex, 0)
 	}
 
-	rf.applyCh = make(chan ApplyMsg, 100)
+	//rf.applyCh = make(chan ApplyMsg, 100)
 	rf.notifyApplyCh = make(chan struct{}, 100)
 
 	// initialize from state persisted before a crash
