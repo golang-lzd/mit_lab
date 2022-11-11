@@ -107,6 +107,9 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 				rf.ResetElectionTimeOut()
 				return
 			} else {
+				if reply.NextLogIndex == 0 {
+					fmt.Println("??????????????")
+				}
 				rf.NextIndex[server] = reply.NextLogIndex
 				rf.ResetHeartBeatTimeOutZeros(server)
 				rf.mu.Unlock()
@@ -221,10 +224,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		if len(rf.Log)-1 < args.PrevLogIndex {
 			// 日志不够
+			if len(rf.Log) == 0 {
+				fmt.Println("rf[log】 为空????")
+			}
 			reply.NextLogIndex = len(rf.Log)
 			return
 		} else {
 			// 日志 Term 不符合,每次-1
+			fmt.Println("不该出现错误")
 			reply.NextLogIndex = args.PrevLogIndex
 			return
 		}
