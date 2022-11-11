@@ -206,6 +206,15 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	var VoteGrantedCount int64 = 0
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
+	rf.mu.Lock()
+	LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
+	args := &RequestVoteArgs{
+		Term:         rf.CurrentTerm,
+		CandidatedID: rf.me,
+		LastLogTerm:  LastLogTerm,
+		LastLogIndex: LastLogIndex,
+	}
+	rf.mu.Unlock()
 
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
@@ -213,14 +222,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 		}
 		go func(i int) {
 			rf.mu.Lock()
-			LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
 			rf.mu.Unlock()
-			args := &RequestVoteArgs{
-				Term:         rf.CurrentTerm,
-				CandidatedID: rf.me,
-				LastLogTerm:  LastLogTerm,
-				LastLogIndex: LastLogIndex,
-			}
 			reply := &RequestVoteReply{}
 			ok := rf.sendRequestVote(i, args, reply)
 			ch <- reply
@@ -234,8 +236,11 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				rf.CurrentTerm = reply.Term
 				// 当前raft 过期,假设 当前处于candidate
 				rf.StateMachine.SetState(FollowerState)
+				rf.ResetElectionTimeOut()
 				rf.VotedFor = -1
-			} else if reply.VoteGranted {
+			}
+
+			if reply.VoteGranted && reply.Term == args.Term {
 				log.Println(rf.WithState("收到 node-%d 的投票", i))
 				atomic.AddInt64(&VoteGrantedCount, 1)
 				atomic.AddInt64(&resCount, 1)
@@ -261,7 +266,10 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	// 收到了半数以上同意的票
 	if int(atomic.LoadInt64(&VoteGrantedCount)+1) > len(rf.peers)/2 {
 		log.Println(rf.WithState("收到半数以上票，成为leader"))
-		rf.StateMachine.SetState(LeaderState)
+		if rf.StateMachine.GetState() == CandidateState && rf.CurrentTerm == args.Term {
+			rf.StateMachine.SetState(LeaderState)
+		}
+
 		// 成为leader 后需要更新的状态
 		for i := 0; i < len(rf.peers); i++ {
 			rf.mu.Lock()

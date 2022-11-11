@@ -97,19 +97,18 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if ok {
+		log.Println(rf.WithState("收到心跳响应,响应状态:%t", reply.Success))
 		// 根据raft 原理可知，失败有两种情况,一种是Term 较小，另一种是日志不对应
 		if !reply.Success {
 			rf.mu.Lock()
 			if reply.Term > rf.CurrentTerm {
+				log.Println(rf.WithState("收到心跳响应,重置Term"))
 				rf.CurrentTerm = reply.Term
 				rf.mu.Unlock()
 				rf.StateMachine.SetState(FollowerState)
 				rf.ResetElectionTimeOut()
 				return
 			} else {
-				if reply.NextLogIndex == 0 {
-					fmt.Println("??????????????")
-				}
 				rf.NextIndex[server] = reply.NextLogIndex
 				rf.ResetHeartBeatTimeOutZeros(server)
 				rf.mu.Unlock()
@@ -151,6 +150,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
+		reply.NextLogIndex = 1
 		return
 	} else if args.Term >= rf.CurrentTerm {
 		rf.CurrentTerm = args.Term
@@ -224,14 +224,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		if len(rf.Log)-1 < args.PrevLogIndex {
 			// 日志不够
-			if len(rf.Log) == 0 {
-				fmt.Println("rf[log】 为空????")
-			}
 			reply.NextLogIndex = len(rf.Log)
 			return
 		} else {
 			// 日志 Term 不符合,每次-1
-			fmt.Println("不该出现错误")
 			reply.NextLogIndex = args.PrevLogIndex
 			return
 		}

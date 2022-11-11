@@ -446,6 +446,11 @@ func (cfg *config) checkOneLeader() int {
 			}
 		}
 
+		// 输出所有Term 的状态
+		for k, v := range leaders {
+			log.Printf("iter-%d -----[Term-%d] leader:%+v", iters, k, v)
+		}
+
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {
 			if len(leaders) > 1 {
@@ -454,11 +459,6 @@ func (cfg *config) checkOneLeader() int {
 			if term > lastTermWithLeader {
 				lastTermWithLeader = term
 			}
-		}
-
-		// 输出所有Term 的状态
-		for k, v := range leaders {
-			log.Printf("iter-%d -----[Term-%d] leader:%+v", iters, k, v)
 		}
 
 		if len(leaders) != 0 {
