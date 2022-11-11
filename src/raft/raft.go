@@ -171,7 +171,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.CurrentTerm {
 		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
-		//log.Println(rf.WithState("Term: %d->%d 接收到较大Term,重置选举超时", rf.CurrentTerm, args.Term))
+		log.Println(rf.WithState("Term: %d->%d 接收到较大Term,重置选举超时", rf.CurrentTerm, args.Term))
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
@@ -236,7 +236,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				rf.StateMachine.SetState(FollowerState)
 				rf.VotedFor = -1
 			} else if reply.VoteGranted {
-				//log.Println(rf.WithState("收到 node-%d 的投票", i))
+				log.Println(rf.WithState("收到 node-%d 的投票", i))
 				atomic.AddInt64(&VoteGrantedCount, 1)
 				atomic.AddInt64(&resCount, 1)
 			} else {
@@ -267,6 +267,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 			rf.mu.Lock()
 			if i == rf.me {
 				rf.NextIndex[i] = len(rf.Log)
+				rf.MatchIndex[i] = len(rf.Log) - 1
 				rf.mu.Unlock()
 				continue
 			}
@@ -404,6 +405,7 @@ func (rf *Raft) ticker() {
 			continue
 		}
 		go func(i int) {
+
 			for rf.killed() == false {
 				select {
 				case <-rf.HeartBeatTimoutTimer[i].C:

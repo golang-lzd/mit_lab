@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -92,7 +93,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		LeaderCommit: rf.CommitIndex,
 	}
 	rf.mu.Unlock()
-	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
+	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if ok {
@@ -300,7 +301,7 @@ func (rf *Raft) StartElection() {
 	rf.CurrentTerm++
 	rf.StateMachine.SetState(CandidateState)
 	rf.VotedFor = rf.me
-	//log.Println(rf.WithState("选举超时,开始执行startElection \n"))
+	log.Println(rf.WithState("选举超时,开始执行startElection \n"))
 	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()
 }
