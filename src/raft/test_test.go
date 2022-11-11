@@ -25,7 +25,10 @@ const RaftElectionTimeout = 1000 * time.Millisecond
 
 func init() {
 	//f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
-	f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR, os.ModePerm)
+	rand.Seed(time.Now().Unix())
+	s := randstring(10)
+	fmt.Println("name:", s)
+	f, err := os.OpenFile("log_raft"+s+".log", os.O_CREATE|os.O_RDWR, os.ModePerm)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
