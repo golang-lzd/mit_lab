@@ -107,6 +107,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		rf.CurrentTerm = reply.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.ResetElectionTimeOut()
+		rf.persist()
 		return
 	}
 	//  根据https://thesquareplanet.com/blog/students-guide-to-raft/#the-importance-of-details
@@ -162,10 +163,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
+		rf.persist()
 	}
 	// 心跳起作用
 	rf.ResetElectionTimeOut()
 
+	defer rf.persist()
 	if len(rf.Log)-1 >= args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
 		// 单纯的心跳
 		if len(args.Entries) == 0 {
@@ -283,6 +286,7 @@ func (rf *Raft) TryCommit() {
 	if rf.CommitIndex > preCommitIndex {
 		rf.notifyApplyCh <- struct{}{}
 	}
+	rf.persist()
 
 }
 func (rf *Raft) ResetElectionTimeOutZeros() {
@@ -309,6 +313,7 @@ func (rf *Raft) StartElection() {
 	rf.CurrentTerm++
 	rf.StateMachine.SetState(CandidateState)
 	rf.VotedFor = rf.me
+	rf.persist()
 	log.Println(rf.WithState("选举超时,开始执行startElection \n"))
 	rf.mu.Unlock()
 	rf.sendRequestVoteToPeers()

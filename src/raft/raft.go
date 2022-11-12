@@ -198,6 +198,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		if (rf.Log[len(rf.Log)-1].Term == args.LastLogTerm && len(rf.Log)-1 <= args.LastLogIndex) || (rf.Log[len(rf.Log)-1].Term < args.LastLogTerm) {
 			reply.VoteGranted = true
 			rf.VotedFor = args.CandidatedID
+			rf.persist()
 			return
 		} else {
 			reply.VoteGranted = false
@@ -244,6 +245,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 				rf.StateMachine.SetState(FollowerState)
 				rf.ResetElectionTimeOut()
 				rf.VotedFor = -1
+				rf.persist()
 			}
 
 			if reply.VoteGranted && reply.Term == args.Term {
@@ -346,6 +348,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.CurrentTerm,
 		Command: command,
 	})
+	rf.persist()
 	rf.NextIndex[rf.me] = len(rf.Log)
 	rf.MatchIndex[rf.me] = len(rf.Log) - 1
 
