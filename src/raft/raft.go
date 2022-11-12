@@ -186,6 +186,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	if rf.StateMachine.GetState() == LeaderState {
+		reply.VoteGranted = false
+		return
+	}
+
 	// 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他
 	if rf.VotedFor == -1 || rf.VotedFor == args.CandidatedID {
 		if (rf.Log[len(rf.Log)-1].Term == args.LastLogTerm && len(rf.Log)-1 <= args.LastLogIndex) || (rf.Log[len(rf.Log)-1].Term < args.LastLogTerm) {
@@ -327,6 +332,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	if rf.StateMachine.GetState() != LeaderState {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
 		return -1, rf.CurrentTerm, false
 	}
 	rf.mu.Lock()

@@ -1,7 +1,7 @@
 #!/bin/bash
 cnt=1
 test="2A"
-while(( $cnt<=30 ))
+while(( $cnt<=20 ))
 do
     go test -run ${test} > run-${cnt}-1.log &
     go test -run ${test}  > run-${cnt}-2.log&
