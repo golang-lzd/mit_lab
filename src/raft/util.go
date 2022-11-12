@@ -74,15 +74,9 @@ func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
-	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
-		return
-	}
 	rf.mu.Lock()
 	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
 	preIndex := rf.NextIndex[server] - 1
-	rf.mu.Unlock()
-
-	rf.mu.Lock()
 	//log.Println(rf.WithState("server:%d len(log):%d preIndex:%d rf.NextIndex[server]:%d", server, len(rf.Log), preIndex, rf.NextIndex[server]))
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
@@ -92,7 +86,13 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		Entries:      rf.GetSendEntriesDeepCopy(preIndex),
 		LeaderCommit: rf.CommitIndex,
 	}
+
+	if rf.StateMachine.GetState() != LeaderState || server == rf.me {
+		rf.mu.Unlock()
+		return
+	}
 	rf.mu.Unlock()
+
 	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
@@ -101,7 +101,6 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
 	// 如果接收到的RPC 的请求和响应中，任期号T>currentTerm ，则令currentTerm = T,并切换为追随者状态
 	if reply.Term > rf.CurrentTerm {
 		log.Println(rf.WithState("收到心跳响应,重置Term"))
@@ -297,11 +296,12 @@ func (rf *Raft) ResetElectionTimeOut() {
 }
 
 func (rf *Raft) StartElection() {
+	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if _, isLeader := rf.GetState(); isLeader {
+		rf.mu.Unlock()
 		return
 	}
-	rf.mu.Lock()
 	// 开始选举
 	// 如果是Follower -> candidate,
 	// 如果是candidate -> candidate

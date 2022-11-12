@@ -333,17 +333,21 @@ func TestFailNoAgree2B(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
-
+	//time.Sleep(time.Second)
 	cfg.begin("Test (2B): no agreement if too many followers disconnect")
 
+	time.Sleep(time.Second)
 	cfg.one(10, servers, false)
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
+
+	log.Printf("断连了:%d %d %d \n", (leader+1)%servers, (leader+2)%servers, (leader+3)%servers)
 	cfg.disconnect((leader + 1) % servers)
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
 
+	time.Sleep(time.Second)
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
@@ -364,9 +368,12 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.connect((leader + 2) % servers)
 	cfg.connect((leader + 3) % servers)
 
+	log.Printf("连通了:%d %d %d \n", (leader+1)%servers, (leader+2)%servers, (leader+3)%servers)
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
+	//time.Sleep(time.Second)
 	leader2 := cfg.checkOneLeader()
+	log.Printf("当前leader 为:%d \n", leader2)
 	index2, _, ok2 := cfg.rafts[leader2].Start(30)
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
@@ -375,6 +382,7 @@ func TestFailNoAgree2B(t *testing.T) {
 		t.Fatalf("unexpected index %v", index2)
 	}
 
+	log.Println("发送新指令:1000")
 	cfg.one(1000, servers, true)
 
 	cfg.end()

@@ -330,14 +330,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
 	isLeader := true
-
-	if rf.StateMachine.GetState() != LeaderState {
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
-		return -1, rf.CurrentTerm, false
-	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	if rf.StateMachine.GetState() != LeaderState {
+		return -1, rf.CurrentTerm, false
+	}
 
 	rf.Log = append(rf.Log, LogItem{
 		Term:    rf.CurrentTerm,

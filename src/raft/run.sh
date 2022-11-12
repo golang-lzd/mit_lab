@@ -1,6 +1,6 @@
 #!/bin/bash
 cnt=1
-test="2B"
+test="FailNoAgree2B"
 while(( $cnt<=20 ))
 do
     go test -run ${test} > run-${cnt}-1.log &
