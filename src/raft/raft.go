@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"6.824/labgob"
+	"bytes"
 	"log"
 	//	"bytes"
 	"sync"
@@ -100,14 +102,13 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	enc := labgob.NewEncoder(w)
+	enc.Encode(rf.Log)
+	enc.Encode(rf.CurrentTerm)
+	enc.Encode(rf.VotedFor)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 // restore previously persisted state.
@@ -115,19 +116,19 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var (
+		log         []LogItem
+		currentTerm int
+		voteFor     int
+	)
+	if d.Decode(&log) != nil || d.Decode(&currentTerm) != nil || d.Decode(voteFor) != nil {
+		return
+	}
+	rf.Log = log
+	rf.CurrentTerm = currentTerm
+	rf.VotedFor = voteFor
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -175,6 +176,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
 		rf.ResetElectionTimeOut()
+		rf.persist()
 		log.Println(rf.WithState("Term: %d->%d 接收到 node-%d 较大Term,重置选举超时", tmp, args.Term, args.CandidatedID))
 	}
 
