@@ -716,15 +716,22 @@ func TestPersist12C(t *testing.T) {
 
 	cfg.one(11, servers, true)
 
+	time.Sleep(time.Second)
 	// crash and re-start all
 	for i := 0; i < servers; i++ {
+		log.Printf("重启 %d\n", i)
 		cfg.start1(i, cfg.applier)
 	}
+	log.Println("开始模拟网络错误")
+
 	for i := 0; i < servers; i++ {
+		log.Printf("断开 %d\n", i)
 		cfg.disconnect(i)
+		log.Printf("连通 %d\n", i)
 		cfg.connect(i)
 	}
 
+	log.Println("开始发送12")
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()

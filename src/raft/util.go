@@ -163,7 +163,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
-		rf.persist()
 	}
 	// 心跳起作用
 	rf.ResetElectionTimeOut()
@@ -287,7 +286,6 @@ func (rf *Raft) TryCommit() {
 		rf.notifyApplyCh <- struct{}{}
 	}
 	rf.persist()
-
 }
 func (rf *Raft) ResetElectionTimeOutZeros() {
 	rf.ElectionTimeoutTimer.Stop()
@@ -300,7 +298,6 @@ func (rf *Raft) ResetElectionTimeOut() {
 }
 
 func (rf *Raft) StartElection() {
-	log.Println(rf.WithState("选举超时提前打印日志【等待锁】"))
 	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if rf.StateMachine.GetState() == LeaderState {

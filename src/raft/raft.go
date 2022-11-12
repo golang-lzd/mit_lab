@@ -119,14 +119,15 @@ func (rf *Raft) readPersist(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var (
-		log         []LogItem
+		logData     []LogItem
 		currentTerm int
 		voteFor     int
 	)
-	if d.Decode(&log) != nil || d.Decode(&currentTerm) != nil || d.Decode(voteFor) != nil {
+	if d.Decode(&logData) != nil || d.Decode(&currentTerm) != nil || d.Decode(&voteFor) != nil {
+		log.Println("加载报错")
 		return
 	}
-	rf.Log = log
+	rf.Log = logData
 	rf.CurrentTerm = currentTerm
 	rf.VotedFor = voteFor
 }
@@ -481,6 +482,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	log.Println(rf.WithState("重启后--节点状态为: %s \n", FormatStruct(rf.Log)))
 	// start ticker goroutine to start elections
 	go rf.ticker()
 
