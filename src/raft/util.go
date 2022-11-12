@@ -298,7 +298,7 @@ func (rf *Raft) ResetElectionTimeOut() {
 func (rf *Raft) StartElection() {
 	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
-	if _, isLeader := rf.GetState(); isLeader {
+	if rf.StateMachine.GetState() == LeaderState {
 		rf.mu.Unlock()
 		return
 	}

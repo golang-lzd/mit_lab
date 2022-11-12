@@ -183,7 +183,7 @@ func TestRPCBytes2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): RPC byte count")
-
+	time.Sleep(time.Second)
 	cfg.one(99, servers, false)
 	bytes0 := cfg.bytesTotal()
 
@@ -301,7 +301,7 @@ func TestFailAgree2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): agreement after follower reconnects")
-
+	time.Sleep(time.Second)
 	cfg.one(101, servers, false)
 
 	// disconnect one follower from the network.
@@ -336,7 +336,6 @@ func TestFailNoAgree2B(t *testing.T) {
 	//time.Sleep(time.Second)
 	cfg.begin("Test (2B): no agreement if too many followers disconnect")
 
-	time.Sleep(time.Second)
 	cfg.one(10, servers, false)
 
 	// 3 of 5 followers disconnect
@@ -347,7 +346,6 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
 
-	time.Sleep(time.Second)
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
 		t.Fatalf("leader rejected Start()")

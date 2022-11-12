@@ -211,6 +211,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
 	rf.mu.Lock()
+
 	LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
 	args := &RequestVoteArgs{
 		Term:         rf.CurrentTerm,
@@ -273,6 +274,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 		log.Println(rf.WithState("收到半数以上票，成为leader"))
 		if rf.StateMachine.GetState() == CandidateState && rf.CurrentTerm == args.Term {
 			rf.StateMachine.SetState(LeaderState)
+			return
 		}
 
 		// 成为leader 后需要更新的状态
