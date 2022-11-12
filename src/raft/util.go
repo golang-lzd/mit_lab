@@ -96,33 +96,40 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
-	if ok {
-		log.Println(rf.WithState("收到心跳响应,响应状态:%t", reply.Success))
-		// 根据raft 原理可知，失败有两种情况,一种是Term 较小，另一种是日志不对应
-		if !reply.Success {
-			rf.mu.Lock()
-			if reply.Term > rf.CurrentTerm {
-				log.Println(rf.WithState("收到心跳响应,重置Term"))
-				rf.CurrentTerm = reply.Term
-				rf.mu.Unlock()
-				rf.StateMachine.SetState(FollowerState)
-				rf.ResetElectionTimeOut()
-				return
-			} else {
-				rf.NextIndex[server] = reply.NextLogIndex
-				rf.ResetHeartBeatTimeOutZeros(server)
-				rf.mu.Unlock()
-			}
-		} else {
-			// 更新nextIndex,matchIndex
-			rf.mu.Lock()
-			rf.NextIndex[server] = rf.NextIndex[server] + len(args.Entries)
-			rf.MatchIndex[server] = rf.NextIndex[server] + len(args.Entries) - 1
-			rf.mu.Unlock()
-			rf.TryCommit()
+	if !ok {
+		return
+	}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// 如果接收到的RPC 的请求和响应中，任期号T>currentTerm ，则令currentTerm = T,并切换为追随者状态
+	if reply.Term > rf.CurrentTerm {
+		log.Println(rf.WithState("收到心跳响应,重置Term"))
+		rf.CurrentTerm = reply.Term
+		rf.StateMachine.SetState(FollowerState)
+		rf.ResetElectionTimeOut()
+		return
+	}
+	//  根据https://thesquareplanet.com/blog/students-guide-to-raft/#the-importance-of-details
+	// 所说，当args.Term 和 currentTerm 不相等时，不应该再做后续的处理
+	if rf.StateMachine.GetState() != LeaderState || args.Term != rf.CurrentTerm {
+		return
+	}
+
+	log.Println(rf.WithState("收到心跳响应,响应状态:%t", reply.Success))
+	if !reply.Success {
+		if reply.NextLogIndex != 0 {
+			rf.NextIndex[server] = reply.NextLogIndex
+			rf.ResetHeartBeatTimeOutZeros(server)
 		}
+	} else {
+		// 更新nextIndex,matchIndex
+		rf.NextIndex[server] = args.PrevLogIndex + len(args.Entries) + 1
+		rf.MatchIndex[server] = args.PrevLogIndex + len(args.Entries)
+		rf.TryCommit()
 	}
 }
+
 func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	t := time.NewTimer(RPCTimeOut)
 	ch := make(chan bool, 1)
@@ -258,9 +265,6 @@ func (rf *Raft) StartApplyLogs() {
 }
 
 func (rf *Raft) TryCommit() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	preCommitIndex := rf.CommitIndex
 	for i := rf.CommitIndex + 1; i < len(rf.Log); i++ {
 		// 假设存在 N 满足N > commitIndex，使得大多数的 matchIndex[i] ≥ N以及log[N].term == currentTerm 成立，则令 commitIndex = N

@@ -263,6 +263,9 @@ func (rf *Raft) sendRequestVoteToPeers() {
 		if int(atomic.LoadInt64(&resCount)) == len(rf.peers)-1 {
 			break
 		}
+		if args.Term != rf.CurrentTerm {
+			break
+		}
 	}
 
 	// 收到了半数以上同意的票
