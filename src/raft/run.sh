@@ -1,7 +1,7 @@
 #!/bin/bash
 cnt=1
-test="FailNoAgree2B"
-while(( $cnt<=20 ))
+test="2B"
+while(( $cnt<=10 ))
 do
     go test -run ${test} > run-${cnt}-1.log &
     go test -run ${test}  > run-${cnt}-2.log&

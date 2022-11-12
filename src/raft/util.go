@@ -103,7 +103,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	defer rf.mu.Unlock()
 	// 如果接收到的RPC 的请求和响应中，任期号T>currentTerm ，则令currentTerm = T,并切换为追随者状态
 	if reply.Term > rf.CurrentTerm {
-		log.Println(rf.WithState("收到心跳响应,重置Term"))
+		log.Println(rf.WithState("收到 node-%d 心跳响应,重置Term", server))
 		rf.CurrentTerm = reply.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.ResetElectionTimeOut()
@@ -115,7 +115,7 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		return
 	}
 
-	log.Println(rf.WithState("收到心跳响应,响应状态:%t", reply.Success))
+	log.Println(rf.WithState("收到 node-%d 心跳响应,响应状态:%t", server, reply.Success))
 	if !reply.Success {
 		if reply.NextLogIndex != 0 {
 			rf.NextIndex[server] = reply.NextLogIndex
@@ -296,6 +296,7 @@ func (rf *Raft) ResetElectionTimeOut() {
 }
 
 func (rf *Raft) StartElection() {
+	log.Println(rf.WithState("选举超时提前打印日志【等待锁】"))
 	rf.mu.Lock()
 	rf.ResetElectionTimeOut()
 	if rf.StateMachine.GetState() == LeaderState {

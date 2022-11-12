@@ -170,11 +170,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term > rf.CurrentTerm {
 		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
-		log.Println(rf.WithState("Term: %d->%d 接收到较大Term,重置选举超时", rf.CurrentTerm, args.Term))
+		tmp := rf.CurrentTerm
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
 		rf.ResetElectionTimeOut()
+		log.Println(rf.WithState("Term: %d->%d 接收到 node-%d 较大Term,重置选举超时", tmp, args.Term, args.CandidatedID))
 	}
 
 	reply.Term = rf.CurrentTerm
