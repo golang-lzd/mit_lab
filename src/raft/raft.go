@@ -80,7 +80,6 @@ type Raft struct {
 	// reinitialized after election
 	NextIndex  []int // 对于每一台服务器,发送到该服务器的下一个日志条目的索引(初始值为领导人最后的日志条目的索引+1)
 	MatchIndex []int // 对于每一台服务器,已知的已经复制到该服务器的最高日志条目的索引,(初始值为0，单调递增)
-
 }
 
 // return currentTerm and whether this server
@@ -226,8 +225,6 @@ func (rf *Raft) sendRequestVoteToPeers() {
 			continue
 		}
 		go func(i int) {
-			rf.mu.Lock()
-			rf.mu.Unlock()
 			reply := &RequestVoteReply{}
 			ok := rf.sendRequestVote(i, args, reply)
 			ch <- reply
