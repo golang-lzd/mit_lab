@@ -111,6 +111,8 @@ func (rf *Raft) GetPersistData() []byte {
 	enc.Encode(rf.Log)
 	enc.Encode(rf.CurrentTerm)
 	enc.Encode(rf.VotedFor)
+	enc.Encode(rf.lastSnapShotTerm)
+	enc.Encode(rf.lastSnapShotIndex)
 	data := w.Bytes()
 	return data
 }
@@ -127,14 +129,19 @@ func (rf *Raft) readPersist(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var (
-		logData     []LogItem
-		currentTerm int
-		voteFor     int
+		logData           []LogItem
+		currentTerm       int
+		voteFor           int
+		lastSnapShotTerm  int
+		lastSnapShotIndex int
 	)
-	if d.Decode(&logData) != nil || d.Decode(&currentTerm) != nil || d.Decode(&voteFor) != nil {
+	if d.Decode(&logData) != nil || d.Decode(&currentTerm) != nil || d.Decode(&voteFor) != nil ||
+		d.Decode(&lastSnapShotTerm) != nil || d.Decode(&lastSnapShotIndex) != nil {
 		log.Println("加载报错")
 		return
 	}
+	rf.lastSnapShotIndex = lastSnapShotIndex
+	rf.lastSnapShotTerm = lastSnapShotTerm
 	rf.Log = logData
 	rf.CurrentTerm = currentTerm
 	rf.VotedFor = voteFor
@@ -229,9 +236,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	lastTerm, lastIndex := rf.GetLastLogTermAndIndex()
 	// 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他
 	if rf.VotedFor == -1 || rf.VotedFor == args.CandidatedID {
-		if (rf.Log[len(rf.Log)-1].Term == args.LastLogTerm && len(rf.Log)-1 <= args.LastLogIndex) || (rf.Log[len(rf.Log)-1].Term < args.LastLogTerm) {
+		if (lastTerm == args.LastLogTerm && lastIndex <= args.LastLogIndex) || (lastTerm < args.LastLogTerm) {
 			reply.VoteGranted = true
 			rf.VotedFor = args.CandidatedID
 			rf.persist()
@@ -252,7 +260,7 @@ func (rf *Raft) sendRequestVoteToPeers() {
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
 	rf.mu.Lock()
 
-	LastLogTerm, LastLogIndex := rf.GetLastLogInfo()
+	LastLogTerm, LastLogIndex := rf.GetLastLogTermAndIndex()
 	args := &RequestVoteArgs{
 		Term:         rf.CurrentTerm,
 		CandidatedID: rf.me,
@@ -321,13 +329,14 @@ func (rf *Raft) sendRequestVoteToPeers() {
 		// 成为leader 后需要更新的状态
 		for i := 0; i < len(rf.peers); i++ {
 			rf.mu.Lock()
+			_, lastIndex := rf.GetLastLogTermAndIndex()
 			if i == rf.me {
-				rf.NextIndex[i] = len(rf.Log)
-				rf.MatchIndex[i] = len(rf.Log) - 1
+				rf.NextIndex[i] = lastIndex + 1
+				rf.MatchIndex[i] = lastIndex
 				rf.mu.Unlock()
 				continue
 			}
-			rf.NextIndex[i] = len(rf.Log)
+			rf.NextIndex[i] = lastIndex + 1
 			rf.MatchIndex[i] = 0
 			rf.mu.Unlock()
 		}
@@ -385,13 +394,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	})
 	rf.persist()
-	rf.NextIndex[rf.me] = len(rf.Log)
-	rf.MatchIndex[rf.me] = len(rf.Log) - 1
+	_, lastIndex := rf.GetLastLogTermAndIndex()
+	rf.NextIndex[rf.me] = lastIndex + 1
+	rf.MatchIndex[rf.me] = lastIndex
 
 	for i := 0; i < len(rf.peers); i++ {
 		rf.ResetHeartBeatTimeOutZeros(i)
 	}
-	index = len(rf.Log) - 1
+	index = lastIndex
 	term = rf.CurrentTerm
 
 	log.Println(rf.WithState("收到命令，%v", command))

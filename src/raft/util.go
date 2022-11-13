@@ -42,13 +42,15 @@ type InstallSnapShotReply struct {
 }
 
 func (rf *Raft) GetStoreIndexByLogIndex(index int) int {
-	//TODO
-	return index
+	return index - rf.lastSnapShotIndex
 }
 
 func (rf *Raft) GetLastLogTermAndIndex() (int, int) {
-	//TODO
-	return 0, 0
+	return rf.Log[len(rf.Log)-1].Term, rf.lastSnapShotIndex + len(rf.Log) - 1
+}
+
+func (rf *Raft) IsOutArgsAppendEntries(args *AppendEntriesArgs) bool {
+
 }
 
 func (rf *Raft) SendInstallSnapShotToPeer(server int) {
@@ -154,26 +156,42 @@ func (rf *Raft) ResetHeartBeatTimeOut(server int) {
 	rf.HeartBeatTimoutTimer[server].Reset(HeartBeatTimeOut)
 }
 
-func (rf *Raft) GetSendEntriesDeepCopy(preIndex int) []LogItem {
-	res := make([]LogItem, 0)
-	for i := preIndex + 1; i < len(rf.Log); i++ {
-		res = append(res, rf.Log[i])
+func (rf *Raft) GetAppendLogs(server int) (preLogIndex int, preLogTerm int, logEntries []LogItem) {
+	logEntries = make([]LogItem, 0)
+	nextIndex := rf.NextIndex[server]
+	// 当nextIndex在快照范围内时
+	if nextIndex <= rf.lastSnapShotIndex {
+		preLogIndex = rf.lastSnapShotIndex
+		preLogTerm = rf.lastSnapShotTerm
+		return
 	}
-	return res
+	// 当nextIndex 大于最大索引时
+	lastTerm, lastIndex := rf.GetLastLogTermAndIndex()
+	if lastIndex < nextIndex {
+		preLogTerm = lastTerm
+		preLogIndex = lastIndex
+		return
+	}
+
+	for i := nextIndex; i <= lastIndex; i++ {
+		logEntries = append(logEntries, rf.Log[rf.GetStoreIndexByLogIndex(i)])
+	}
+	return
 }
 
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
 	rf.mu.Lock()
 	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
-	preIndex := rf.NextIndex[server] - 1
+	// preIndex := rf.NextIndex[server] - 1
+	preIndex, preTerm, logEntries := rf.GetAppendLogs(server)
 	//log.Println(rf.WithState("server:%d len(log):%d preIndex:%d rf.NextIndex[server]:%d", server, len(rf.Log), preIndex, rf.NextIndex[server]))
 	args := &AppendEntriesArgs{
 		Term:         rf.CurrentTerm,
 		LeaderID:     rf.me,
 		PrevLogIndex: preIndex,
-		PrevLogTerm:  rf.Log[preIndex].Term,
-		Entries:      rf.GetSendEntriesDeepCopy(preIndex),
+		PrevLogTerm:  preTerm,
+		Entries:      logEntries,
 		LeaderCommit: rf.CommitIndex,
 	}
 
@@ -209,8 +227,12 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	log.Println(rf.WithState("收到 node-%d 心跳响应,响应状态:%t", server, reply.Success))
 	if !reply.Success {
 		if reply.NextLogIndex != 0 {
-			rf.NextIndex[server] = reply.NextLogIndex
-			rf.ResetHeartBeatTimeOutZeros(server)
+			if reply.NextLogIndex > rf.lastSnapShotIndex {
+				rf.NextIndex[server] = reply.NextLogIndex
+				rf.ResetHeartBeatTimeOutZeros(server)
+			} else {
+				go rf.SendAppendEntriesToPeers(server)
+			}
 		}
 	} else {
 		// 更新nextIndex,matchIndex
@@ -257,84 +279,41 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	defer rf.persist()
-	if len(rf.Log)-1 >= args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
-		// 单纯的心跳
-		if len(args.Entries) == 0 {
-			if rf.CommitIndex < args.LeaderCommit {
-				// 这里可以推断: 上一个新日志的索引为prevLogIndex,当len(entries)=0时，prevLogIndex 就是leader 的最后一个日志记录
-				// 所以 leaderCommit 一定小于等于prevLogIndex.
-				rf.CommitIndex = args.LeaderCommit
-				rf.notifyApplyCh <- struct{}{}
-			}
-			reply.NextLogIndex = args.PrevLogIndex + 1
-			reply.Success = true
-			return
-		} else {
-			if len(args.Entries)+args.PrevLogIndex >= len(rf.Log)-1 {
-				rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
-				if rf.CommitIndex < args.LeaderCommit {
-					// 这里可以推断: 上一个新日志的索引为prevLogIndex,当len(entries)=0时，prevLogIndex 就是leader 的最后一个日志记录
-					// 所以 leaderCommit 一定小于等于prevLogIndex.
-					rf.CommitIndex = args.LeaderCommit
-					rf.notifyApplyCh <- struct{}{}
-				}
-				reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
-				reply.Success = true
-				return
-			} else {
-				// 根据raft 原理, 可知 prevLogIndex 之前的所有日志都能匹配上
-				// 新日志的开始和结束索引
-				left := args.PrevLogIndex + 1
-				right := args.PrevLogIndex + len(args.Entries)
-				i := left
-				ok := true
-				for i = left; i <= right; i++ {
-					if rf.Log[i].Term == args.Entries[i-left].Term {
-						continue
-					} else {
-						ok = false
-						break
-					}
-				}
-				if !ok {
-					// 如果存在冲突条目，删除冲突条目及其后的所有日志
-					rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
-				}
-				// 上一个新条目的索引
-				// 假设冲突了 len(rf.Log)-1
-				// 没冲突并且后边有旧日志 i-1
-				// 没冲突并且后边没有旧日志 len(rf.Log)-1
-				if args.LeaderCommit > rf.CommitIndex {
-					rf.CommitIndex = Min(right, args.LeaderCommit)
-					rf.notifyApplyCh <- struct{}{}
-				}
-				//log.Println(rf.WithState("当前日志为:%v", FormatStruct(rf.Log)))
-				reply.Success = true
-				reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
-				return
-			}
-
-		}
-
-	} else {
-		// 假设日志不符合
+	_, lastIndex := rf.GetLastLogTermAndIndex()
+	if args.PrevLogIndex < rf.lastSnapShotIndex {
 		reply.Success = false
-		if len(rf.Log)-1 < args.PrevLogIndex {
-			// 日志不够
-			reply.NextLogIndex = len(rf.Log)
-			return
+		reply.NextLogIndex = rf.lastSnapShotIndex + 1
+	} else if args.PrevLogIndex > lastIndex {
+		reply.Success = false
+		reply.NextLogIndex = lastIndex + 1
+	} else if args.PrevLogIndex == rf.lastSnapShotIndex {
+		reply.Success = true
+		if !rf.IsOutArgsAppendEntries(args) {
+			rf.Log = append(rf.Log[:1], args.Entries...)
+			_, currentIndex := rf.GetLastLogTermAndIndex()
+			reply.NextLogIndex = currentIndex + 1
 		} else {
-			// 日志 Term 不符合,每次-1
-			reply.NextLogIndex = args.PrevLogIndex
-			return
+			reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
 		}
+		return
+	} else if args.PrevLogTerm == rf.Log[rf.GetStoreIndexByLogIndex(args.PrevLogIndex)].Term {
+		reply.Success = true
+		if !rf.IsOutArgsAppendEntries(args) {
+			rf.Log = append(rf.Log[:rf.GetStoreIndexByLogIndex(args.PrevLogIndex)+1], args.Entries...)
+			_, currentIndex := rf.GetLastLogTermAndIndex()
+			reply.NextLogIndex = currentIndex
+		} else {
+			reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
+		}
+	} else {
+		term := rf.Log[rf.GetStoreIndexByLogIndex(args.PrevLogIndex)].Term
+		index := args.PrevLogIndex
+		for index > rf.CommitIndex && index > rf.lastSnapShotIndex && rf.Log[rf.GetStoreIndexByLogIndex(index)].Term == term {
+			index--
+		}
+		reply.Success = false
+		reply.NextLogIndex = index + 1
 	}
-}
-
-func (rf *Raft) GetLastLogInfo() (LastLogTerm int, LastLogIndex int) {
-	LastLogTerm = rf.Log[len(rf.Log)-1].Term
-	LastLogIndex = len(rf.Log) - 1
-	return
 }
 
 // 如果commitIndex > lastApplied，则 lastApplied 递增，并将log[lastApplied]应用到状态机中
@@ -346,7 +325,7 @@ func (rf *Raft) StartApplyLogs() {
 	for i := rf.LastApplied; i <= rf.CommitIndex; i++ {
 		applyMsg := ApplyMsg{
 			CommandValid: true,
-			Command:      rf.Log[i].Command,
+			Command:      rf.Log[rf.GetStoreIndexByLogIndex(i)].Command,
 			CommandIndex: i,
 		}
 		rf.applyCh <- applyMsg
@@ -356,9 +335,10 @@ func (rf *Raft) StartApplyLogs() {
 
 func (rf *Raft) TryCommit() {
 	preCommitIndex := rf.CommitIndex
-	for i := rf.CommitIndex + 1; i < len(rf.Log); i++ {
+	_, lastIndex := rf.GetLastLogTermAndIndex()
+	for i := rf.CommitIndex + 1; i <= lastIndex; i++ {
 		// 假设存在 N 满足N > commitIndex，使得大多数的 matchIndex[i] ≥ N以及log[N].term == currentTerm 成立，则令 commitIndex = N
-		if rf.Log[i].Term != rf.CurrentTerm {
+		if rf.Log[rf.GetStoreIndexByLogIndex(i)].Term != rf.CurrentTerm {
 			continue
 		}
 		count := 0
