@@ -50,7 +50,15 @@ func (rf *Raft) GetLastLogTermAndIndex() (int, int) {
 }
 
 func (rf *Raft) IsOutArgsAppendEntries(args *AppendEntriesArgs) bool {
-
+	if len(args.Entries) == 0 {
+		return true
+	}
+	for i := args.PrevLogIndex + 1; i <= args.PrevLogIndex+len(args.Entries); i++ {
+		if args.Entries[i-args.PrevLogIndex-1].Term != rf.Log[rf.GetStoreIndexByLogIndex(i)].Term {
+			return false
+		}
+	}
+	return true
 }
 
 func (rf *Raft) SendInstallSnapShotToPeer(server int) {
@@ -175,6 +183,13 @@ func (rf *Raft) GetAppendLogs(server int) (preLogIndex int, preLogTerm int, logE
 
 	for i := nextIndex; i <= lastIndex; i++ {
 		logEntries = append(logEntries, rf.Log[rf.GetStoreIndexByLogIndex(i)])
+	}
+
+	preLogIndex = nextIndex - 1
+	if preLogIndex == rf.lastSnapShotIndex {
+		preLogTerm = rf.lastSnapShotTerm
+	} else {
+		preLogTerm = rf.Log[rf.GetStoreIndexByLogIndex(preLogIndex)].Term
 	}
 	return
 }
