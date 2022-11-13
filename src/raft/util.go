@@ -1,31 +1,9 @@
 package raft
 
 import (
-	"fmt"
 	"log"
 	"time"
 )
-
-func (rf *Raft) WithState(format string, a ...interface{}) string {
-	_s := fmt.Sprintf(format, a...)
-	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, _s)
-}
-
-func Min(a, b int) int {
-	if a < b {
-		return a
-	} else {
-		return b
-	}
-}
-
-func Max(a, b int) int {
-	if a > b {
-		return a
-	} else {
-		return b
-	}
-}
 
 type LogItem struct {
 	Command interface{}
@@ -49,6 +27,118 @@ type AppendEntriesReply struct {
 	NextLogTerm  int
 }
 
+type InstallSnapShotArgs struct {
+	Term              int //current leader term
+	LeaderID          int
+	LastIncludedIndex int    // 快照中包含的最后日志条目的索引值
+	LastIncludedTerm  int    // 快照中包含的最后日志条目的任期号
+	Offset            int    // 分块在快照中字节偏移量
+	Data              []byte // 从快照开始的快照分块的原始字节
+	Done              bool   // 是否是最后一个分块，实现时不分块，即 always set Done=true
+}
+
+type InstallSnapShotReply struct {
+	Term int
+}
+
+func (rf *Raft) GetStoreIndexByLogIndex(index int) int {
+	//TODO
+	return index
+}
+
+func (rf *Raft) GetLastLogTermAndIndex() (int, int) {
+	//TODO
+	return 0, 0
+}
+
+func (rf *Raft) SendInstallSnapShotToPeer(server int) {
+	rf.mu.Lock()
+	args := &InstallSnapShotArgs{
+		Term:              rf.CurrentTerm,
+		LeaderID:          rf.me,
+		LastIncludedIndex: rf.lastSnapShotIndex,
+		LastIncludedTerm:  rf.lastSnapShotTerm,
+		Offset:            0,
+		Data:              rf.persister.ReadSnapshot(), //TODO
+		Done:              true,
+	}
+
+	rf.mu.Unlock()
+	reply := &InstallSnapShotReply{}
+	ok := rf.SendInstallSnapShot(server, args, reply)
+	if !ok {
+		return
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if reply.Term > rf.CurrentTerm {
+		log.Println(rf.WithState("收到 node-%d 心跳响应,重置Term", server))
+		rf.CurrentTerm = reply.Term
+		rf.StateMachine.SetState(FollowerState)
+		rf.VotedFor = -1
+		rf.ResetElectionTimeOut()
+		rf.persist()
+		return
+	}
+	//  根据https://thesquareplanet.com/blog/students-guide-to-raft/#the-importance-of-details
+	// 所说，当args.Term 和 currentTerm 不相等时，不应该再做后续的处理
+	if rf.StateMachine.GetState() != LeaderState || args.Term != rf.CurrentTerm {
+		return
+	}
+
+	// 更新matchIndex ,nextIndex
+	rf.MatchIndex[server] = Max(rf.MatchIndex[server], rf.lastSnapShotIndex)
+	rf.NextIndex[server] = Max(rf.NextIndex[server], rf.lastSnapShotIndex+1)
+
+}
+
+func (rf *Raft) SendInstallSnapShot(server int, args *InstallSnapShotArgs, reply *InstallSnapShotReply) bool {
+	// TODO 是否改成一直发送直到能送达follower
+	t := time.NewTimer(RPCTimeOut)
+	ch := make(chan bool, 1)
+
+	go func() {
+		ok := rf.peers[server].Call("Raft.InstallSnapShot", args, reply)
+		ch <- ok
+	}()
+
+	select {
+	case <-t.C:
+		return false
+	case res := <-ch:
+		return res
+	}
+}
+
+func (rf *Raft) InstallSnapShot(args *InstallSnapShotArgs, reply *InstallSnapShotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.CurrentTerm {
+		return
+	} else if args.Term > rf.CurrentTerm || rf.StateMachine.GetState() != FollowerState { // 这里注意：当状态不是Follower 时也要重置
+		rf.CurrentTerm = args.Term
+		rf.StateMachine.SetState(FollowerState)
+		rf.ResetElectionTimeOut()
+		rf.VotedFor = -1
+		rf.persist()
+	}
+
+	reply.Term = rf.CurrentTerm
+
+	if rf.lastSnapShotIndex >= args.LastIncludedIndex {
+		return
+	}
+	rf.applyCh <- ApplyMsg{
+		CommandValid:  false,
+		SnapshotValid: true,
+		Snapshot:      args.Data,
+		SnapshotIndex: args.LastIncludedIndex,
+		SnapshotTerm:  args.LastIncludedTerm,
+	}
+}
 func (rf *Raft) ResetApplyMsgTimeOut() {
 	rf.ApplyMsgTimer.Stop()
 	rf.ApplyMsgTimer.Reset(ApplyMsgTimeOut)
@@ -162,10 +252,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else if args.Term >= rf.CurrentTerm {
 		rf.CurrentTerm = args.Term
 		rf.StateMachine.SetState(FollowerState)
+		rf.ResetElectionTimeOut()
 		rf.VotedFor = -1
 	}
-	// 心跳起作用
-	rf.ResetElectionTimeOut()
 
 	defer rf.persist()
 	if len(rf.Log)-1 >= args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {

@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -34,4 +35,25 @@ func FormatStruct(s interface{}) string {
 	var out bytes.Buffer
 	json.Indent(&out, bs, "", "\t")
 	return out.String()
+}
+
+func (rf *Raft) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, _s)
+}
+
+func Min(a, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+
+func Max(a, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
 }

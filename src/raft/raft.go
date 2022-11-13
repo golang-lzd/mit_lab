@@ -36,9 +36,8 @@ import (
 // CommandValid to true to indicate that the ApplyMsg contains a newly
 // committed log entry.
 //
-// in part 2D you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh, but set CommandValid to false for these
-// other uses.
+// 当发送snapshot 时,set CommandVaild=false,SnapshotValid=true
+
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -82,6 +81,10 @@ type Raft struct {
 	// reinitialized after election
 	NextIndex  []int // 对于每一台服务器,发送到该服务器的下一个日志条目的索引(初始值为领导人最后的日志条目的索引+1)
 	MatchIndex []int // 对于每一台服务器,已知的已经复制到该服务器的最高日志条目的索引,(初始值为0，单调递增)
+
+	// 2D
+	lastSnapShotIndex int
+	lastSnapShotTerm  int
 }
 
 // return currentTerm and whether this server
@@ -101,14 +104,19 @@ func (rf *Raft) GetState() (int, bool) {
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
-func (rf *Raft) persist() {
+
+func (rf *Raft) GetPersistData() []byte {
 	w := new(bytes.Buffer)
 	enc := labgob.NewEncoder(w)
 	enc.Encode(rf.Log)
 	enc.Encode(rf.CurrentTerm)
 	enc.Encode(rf.VotedFor)
 	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	return data
+}
+
+func (rf *Raft) persist() {
+	rf.persister.SaveRaftState(rf.GetPersistData())
 }
 
 // restore previously persisted state.
@@ -135,9 +143,22 @@ func (rf *Raft) readPersist(data []byte) {
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// Your code here (2D).
+	_, lastIndex := rf.GetLastLogTermAndIndex()
+	if lastIncludedIndex > lastIndex {
+		rf.Log = make([]LogItem, 1)
+	} else {
+		// 设计非常巧妙
+		rf.Log = rf.Log[lastIncludedIndex-rf.lastSnapShotIndex:]
+		rf.Log[0].Command = nil
+	}
+	rf.Log[0].Term = lastIncludedTerm
 
+	rf.lastSnapShotIndex, rf.lastSnapShotTerm = lastIncludedIndex, lastIncludedTerm
+	rf.LastApplied, rf.CommitIndex = lastIncludedIndex, lastIncludedIndex
+	rf.persister.SaveStateAndSnapshot(rf.GetPersistData(), snapshot)
 	return true
 }
 
@@ -147,7 +168,21 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if rf.lastSnapShotIndex >= index {
+		return
+	}
+	oldIndex := rf.lastSnapShotIndex
+	// 这里要注意把修改index 放在修改term 的后边
+	rf.lastSnapShotTerm = rf.Log[rf.GetStoreIndexByLogIndex(index)].Term
+	rf.lastSnapShotIndex = index
+	rf.Log = rf.Log[index-oldIndex:]
+
+	rf.Log[0].Term = rf.lastSnapShotTerm
+	rf.Log[0].Command = nil
+	rf.persister.SaveStateAndSnapshot(rf.GetPersistData(), snapshot)
 }
 
 type RequestVoteArgs struct {
