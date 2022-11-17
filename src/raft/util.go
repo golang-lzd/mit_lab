@@ -50,15 +50,12 @@ func (rf *Raft) GetLastLogTermAndIndex() (int, int) {
 }
 
 func (rf *Raft) IsOutArgsAppendEntries(args *AppendEntriesArgs) bool {
-	if len(args.Entries) == 0 {
+	argsLastLogIndex := args.PrevLogIndex + len(args.Entries)
+	lastLogTerm, lastLogIndex := rf.GetLastLogTermAndIndex()
+	if lastLogTerm == args.Term && argsLastLogIndex < lastLogIndex {
 		return true
 	}
-	for i := args.PrevLogIndex + 1; i <= args.PrevLogIndex+len(args.Entries); i++ {
-		if args.Entries[i-args.PrevLogIndex-1].Term != rf.Log[rf.GetStoreIndexByLogIndex(i)].Term {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func (rf *Raft) SendInstallSnapShotToPeer(server int) {
@@ -75,16 +72,19 @@ func (rf *Raft) SendInstallSnapShotToPeer(server int) {
 
 	rf.mu.Unlock()
 	reply := &InstallSnapShotReply{}
+	log.Println(rf.WithState("发送安装快照请求,%s", FormatStruct(args)))
 	ok := rf.SendInstallSnapShot(server, args, reply)
 	if !ok {
 		return
+	} else {
+		log.Println(rf.WithState("收到安装快照请求响应"))
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	if reply.Term > rf.CurrentTerm {
-		log.Println(rf.WithState("收到 node-%d 心跳响应,重置Term", server))
+		log.Println(rf.WithState("收到 node-%d 安装快照响应,重置Term", server))
 		rf.CurrentTerm = reply.Term
 		rf.StateMachine.SetState(FollowerState)
 		rf.VotedFor = -1
@@ -105,20 +105,26 @@ func (rf *Raft) SendInstallSnapShotToPeer(server int) {
 }
 
 func (rf *Raft) SendInstallSnapShot(server int, args *InstallSnapShotArgs, reply *InstallSnapShotReply) bool {
-	// TODO 是否改成一直发送直到能送达follower
-	t := time.NewTimer(RPCTimeOut)
-	ch := make(chan bool, 1)
+	for {
+		// TODO 是否改成一直发送直到能送达follower
+		t := time.NewTimer(RPCTimeOut)
+		ch := make(chan bool, 1)
 
-	go func() {
-		ok := rf.peers[server].Call("Raft.InstallSnapShot", args, reply)
-		ch <- ok
-	}()
+		go func() {
+			ok := rf.peers[server].Call("Raft.InstallSnapShot", args, reply)
+			ch <- ok
+		}()
 
-	select {
-	case <-t.C:
-		return false
-	case res := <-ch:
-		return res
+		select {
+		case <-t.C:
+			return false
+		case res := <-ch:
+			if !res {
+				continue
+			} else {
+				return res
+			}
+		}
 	}
 }
 
@@ -223,7 +229,9 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		return
 	}
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 	// 如果接收到的RPC 的请求和响应中，任期号T>currentTerm ，则令currentTerm = T,并切换为追随者状态
 	if reply.Term > rf.CurrentTerm {
 		log.Println(rf.WithState("收到 node-%d 心跳响应,重置Term", server))
@@ -295,6 +303,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	defer rf.persist()
 	_, lastIndex := rf.GetLastLogTermAndIndex()
+
+	// prevLogIndex 和 lastSnapShotIndex,lastIndex 的关系
 	if args.PrevLogIndex < rf.lastSnapShotIndex {
 		reply.Success = false
 		reply.NextLogIndex = rf.lastSnapShotIndex + 1
@@ -302,23 +312,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.NextLogIndex = lastIndex + 1
 	} else if args.PrevLogIndex == rf.lastSnapShotIndex {
-		reply.Success = true
 		if !rf.IsOutArgsAppendEntries(args) {
+			reply.Success = true
 			rf.Log = append(rf.Log[:1], args.Entries...)
 			_, currentIndex := rf.GetLastLogTermAndIndex()
 			reply.NextLogIndex = currentIndex + 1
 		} else {
-			reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
+			reply.Success = true
+			reply.NextLogIndex = 0
 		}
 		return
 	} else if args.PrevLogTerm == rf.Log[rf.GetStoreIndexByLogIndex(args.PrevLogIndex)].Term {
-		reply.Success = true
 		if !rf.IsOutArgsAppendEntries(args) {
+			reply.Success = true
 			rf.Log = append(rf.Log[:rf.GetStoreIndexByLogIndex(args.PrevLogIndex)+1], args.Entries...)
 			_, currentIndex := rf.GetLastLogTermAndIndex()
 			reply.NextLogIndex = currentIndex
 		} else {
-			reply.NextLogIndex = args.PrevLogIndex + len(args.Entries) + 1
+			reply.Success = true
+			reply.NextLogIndex = 0 // 当为0 时，不处理
 		}
 	} else {
 		term := rf.Log[rf.GetStoreIndexByLogIndex(args.PrevLogIndex)].Term
@@ -329,23 +341,46 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.NextLogIndex = index + 1
 	}
+	// 有提交数据的话，此时可以保证args.LeaderCommit小于新日志的最大索引
+	if reply.Success {
+		if args.LeaderCommit > rf.CommitIndex {
+			rf.CommitIndex = args.LeaderCommit
+			rf.notifyApplyCh <- struct{}{}
+		}
+	}
+
 }
 
 // 如果commitIndex > lastApplied，则 lastApplied 递增，并将log[lastApplied]应用到状态机中
 
 func (rf *Raft) StartApplyLogs() {
+	var msgs []ApplyMsg
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
-	for i := rf.LastApplied; i <= rf.CommitIndex; i++ {
-		applyMsg := ApplyMsg{
-			CommandValid: true,
-			Command:      rf.Log[rf.GetStoreIndexByLogIndex(i)].Command,
-			CommandIndex: i,
+	if rf.LastApplied < rf.lastSnapShotIndex {
+		rf.mu.Unlock()
+		rf.CondInstallSnapshot(rf.lastSnapShotTerm, rf.lastSnapShotIndex, rf.persister.snapshot)
+		return
+	} else if rf.CommitIndex < rf.LastApplied {
+		msgs = make([]ApplyMsg, 0)
+	} else {
+		msgs = make([]ApplyMsg, 0)
+		for i := rf.LastApplied + 1; i <= rf.CommitIndex; i++ {
+			msgs = append(msgs, ApplyMsg{
+				CommandValid: true,
+				Command:      rf.Log[rf.GetStoreIndexByLogIndex(i)].Command,
+				CommandIndex: i,
+			})
 		}
-		rf.applyCh <- applyMsg
 	}
-	rf.LastApplied = rf.CommitIndex
+	rf.mu.Unlock()
+
+	for _, msg := range msgs {
+		rf.applyCh <- msg
+		rf.mu.Lock()
+		rf.LastApplied = msg.CommandIndex
+		rf.mu.Unlock()
+	}
 }
 
 func (rf *Raft) TryCommit() {

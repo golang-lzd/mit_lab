@@ -91,7 +91,9 @@ type Raft struct {
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 
 	var term int
 	var isleader bool
@@ -151,7 +153,9 @@ func (rf *Raft) readPersist(data []byte) {
 // have more recent info since it communicate the snapshot on applyCh.
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 	// Your code here (2D).
 	_, lastIndex := rf.GetLastLogTermAndIndex()
 	if lastIncludedIndex > lastIndex {
@@ -176,7 +180,9 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 
 	if rf.lastSnapShotIndex >= index {
 		return
@@ -209,8 +215,12 @@ type RequestVoteReply struct {
 // RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	log.Println(rf.WithState("RequestVote Begin"))
+	defer log.Println(rf.WithState("RequestVote Done"))
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 
 	if args.Term > rf.CurrentTerm {
 		// 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，则令 currentTerm = T，并切换为跟随者状态
@@ -255,6 +265,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) sendRequestVoteToPeers() {
+	log.Println(rf.WithState("sendRequestVoteToPeers Begin"))
+	defer log.Println(rf.WithState("sendRequestVoteToPeers Done"))
 	var VoteGrantedCount int64 = 0
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
@@ -383,7 +395,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term := -1
 	isLeader := true
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.mu.Unlock()
+	}()
 
 	if rf.StateMachine.GetState() != LeaderState {
 		return -1, rf.CurrentTerm, false
@@ -514,6 +528,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.Log = []LogItem{{Term: 0, Command: "None"}}
 	rf.CommitIndex = 0
 	rf.LastApplied = 0
+	rf.lastSnapShotIndex = 0
+	rf.lastSnapShotTerm = 0
 	rf.NextIndex = make([]int, 0)
 	rf.MatchIndex = make([]int, 0)
 	for i := 0; i < len(peers); i++ {

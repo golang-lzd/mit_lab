@@ -1,6 +1,6 @@
 #!/bin/bash
 cnt=1
-test="UnreliableChurn2C"
+test="2C"
 while(( $cnt<=10 ))
 do
     go test -run ${test} > run-${cnt}-1.log &
