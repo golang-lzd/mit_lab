@@ -1151,8 +1151,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	leader1 := cfg.checkOneLeader()
 
 	for i := 0; i < iters; i++ {
-		victim := (leader1 + 1) % servers //1
-		sender := leader1                 //0
+		victim := (leader1 + 1) % servers
+		sender := leader1
 		if i%3 == 1 {
 			sender = (leader1 + 1) % servers
 			victim = leader1
@@ -1172,7 +1172,6 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		for i := 0; i < nn; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
-
 		// let applier threads catch up with the Start()'s
 		if disconnect == false && crash == false {
 			// make sure all followers have caught up, so that
@@ -1186,12 +1185,10 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if cfg.LogSize() >= MAXLOGSIZE {
 			cfg.t.Fatalf("Log size too large")
 		}
-		time.Sleep(3 * time.Second)
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
 			cfg.connect(victim)
-			time.Sleep(3 * time.Second)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
@@ -1201,7 +1198,6 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
-		break
 	}
 	cfg.end()
 }
