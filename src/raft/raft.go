@@ -196,6 +196,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.Log[0].Term = rf.lastSnapShotTerm
 	rf.Log[0].Command = nil
 	rf.persister.SaveStateAndSnapshot(rf.GetPersistData(), snapshot)
+	log.Println(rf.WithState("结束一次SnapShot,当前lastSnapShotTerm:%d,lastSnapShotIndex:%d,log:%s", rf.lastSnapShotTerm, rf.lastSnapShotIndex, FormatStruct(rf.Log)))
 }
 
 type RequestVoteArgs struct {
@@ -215,8 +216,6 @@ type RequestVoteReply struct {
 // RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	log.Println(rf.WithState("RequestVote Begin"))
-	defer log.Println(rf.WithState("RequestVote Done"))
 	rf.mu.Lock()
 	defer func() {
 		rf.mu.Unlock()
@@ -265,8 +264,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) sendRequestVoteToPeers() {
-	log.Println(rf.WithState("sendRequestVoteToPeers Begin"))
-	defer log.Println(rf.WithState("sendRequestVoteToPeers Done"))
 	var VoteGrantedCount int64 = 0
 	var resCount int64 = 0
 	ch := make(chan *RequestVoteReply, len(rf.peers)-1)
@@ -486,7 +483,6 @@ func (rf *Raft) ticker() {
 			continue
 		}
 		go func(i int) {
-
 			for rf.killed() == false {
 				select {
 				case <-rf.HeartBeatTimoutTimer[i].C:

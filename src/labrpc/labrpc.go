@@ -103,6 +103,7 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 		// the request has been sent.
 	case <-e.done:
 		// entire Network has been destroyed.
+		log.Println("出现了未知故障")
 		return false
 	}
 
@@ -228,6 +229,7 @@ func (rn *Network) processReq(req reqMsg) {
 		if reliable == false && (rand.Int()%1000) < 100 {
 			// drop the request, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
+			//log.Println("返回false")
 			return
 		}
 
@@ -272,9 +274,11 @@ func (rn *Network) processReq(req reqMsg) {
 		if replyOK == false || serverDead == true {
 			// server was killed while we were waiting; return error.
 			req.replyCh <- replyMsg{false, nil}
+			//log.Println("返回false")
 		} else if reliable == false && (rand.Int()%1000) < 100 {
 			// drop the reply, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
+			//log.Println("返回false")
 		} else if longreordering == true && rand.Intn(900) < 600 {
 			// delay the response for a while
 			ms := 200 + rand.Intn(1+rand.Intn(2000))
@@ -303,6 +307,7 @@ func (rn *Network) processReq(req reqMsg) {
 		}
 		time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
 			req.replyCh <- replyMsg{false, nil}
+			//log.Printf("enabled:%v, servername:%v,server:%v,返回false \n", enabled, servername != nil, server != nil)
 		})
 	}
 

@@ -39,7 +39,7 @@ func FormatStruct(s interface{}) string {
 
 func (rf *Raft) WithState(format string, a ...interface{}) string {
 	_s := fmt.Sprintf(format, a...)
-	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, _s)
+	return fmt.Sprintf("[Term-%d Raft-%d VoteFor-%d CommitIndex-%d leader:%v] %s", rf.CurrentTerm, rf.me, rf.VotedFor, rf.CommitIndex, rf.StateMachine.GetState() == LeaderState, _s)
 }
 
 func Min(a, b int) int {

@@ -42,6 +42,9 @@ type InstallSnapShotReply struct {
 }
 
 func (rf *Raft) GetStoreIndexByLogIndex(index int) int {
+	if index-rf.lastSnapShotIndex < 0 {
+		return -1
+	}
 	return index - rf.lastSnapShotIndex
 }
 
@@ -76,8 +79,6 @@ func (rf *Raft) SendInstallSnapShotToPeer(server int) {
 	ok := rf.SendInstallSnapShot(server, args, reply)
 	if !ok {
 		return
-	} else {
-		log.Println(rf.WithState("收到安装快照请求响应"))
 	}
 
 	rf.mu.Lock()
@@ -105,7 +106,7 @@ func (rf *Raft) SendInstallSnapShotToPeer(server int) {
 }
 
 func (rf *Raft) SendInstallSnapShot(server int, args *InstallSnapShotArgs, reply *InstallSnapShotReply) bool {
-	for {
+	for i := 0; i < 10; i++ {
 		// TODO 是否改成一直发送直到能送达follower
 		t := time.NewTimer(RPCTimeOut)
 		ch := make(chan bool, 1)
@@ -117,7 +118,7 @@ func (rf *Raft) SendInstallSnapShot(server int, args *InstallSnapShotArgs, reply
 
 		select {
 		case <-t.C:
-			return false
+			continue
 		case res := <-ch:
 			if !res {
 				continue
@@ -126,6 +127,7 @@ func (rf *Raft) SendInstallSnapShot(server int, args *InstallSnapShotArgs, reply
 			}
 		}
 	}
+	return false
 }
 
 func (rf *Raft) InstallSnapShot(args *InstallSnapShotArgs, reply *InstallSnapShotReply) {
@@ -203,8 +205,6 @@ func (rf *Raft) GetAppendLogs(server int) (preLogIndex int, preLogTerm int, logE
 func (rf *Raft) SendAppendEntriesToPeers(server int) {
 	rf.ResetHeartBeatTimeOut(server)
 	rf.mu.Lock()
-	//log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d \n", server))
-	// preIndex := rf.NextIndex[server] - 1
 	preIndex, preTerm, logEntries := rf.GetAppendLogs(server)
 	//log.Println(rf.WithState("server:%d len(log):%d preIndex:%d rf.NextIndex[server]:%d", server, len(rf.Log), preIndex, rf.NextIndex[server]))
 	args := &AppendEntriesArgs{
@@ -221,8 +221,9 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		return
 	}
 	rf.mu.Unlock()
-
-	log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
+	if len(args.Entries) != 0 {
+		log.Println(rf.WithState("心跳超时，开始发送心跳给所有peer-%d 参数为:%v\n", server, FormatStruct(args)))
+	}
 	reply := &AppendEntriesReply{}
 	ok := rf.SendAppendEntries(server, args, reply)
 	if !ok {
@@ -247,14 +248,13 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 		return
 	}
 
-	log.Println(rf.WithState("收到 node-%d 心跳响应,响应状态:%t", server, reply.Success))
 	if !reply.Success {
 		if reply.NextLogIndex != 0 {
 			if reply.NextLogIndex > rf.lastSnapShotIndex {
 				rf.NextIndex[server] = reply.NextLogIndex
 				rf.ResetHeartBeatTimeOutZeros(server)
 			} else {
-				go rf.SendAppendEntriesToPeers(server)
+				go rf.SendInstallSnapShotToPeer(server)
 			}
 		}
 	} else {
@@ -268,14 +268,23 @@ func (rf *Raft) SendAppendEntriesToPeers(server int) {
 func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	t := time.NewTimer(RPCTimeOut)
 	ch := make(chan bool, 1)
-
 	go func() {
-		ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-		ch <- ok
+		for i := 0; i < 10; i++ {
+			ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+			if !ok {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			} else {
+				ch <- ok
+				return
+			}
+		}
+		//log.Println(rf.WithState("尝试十次失败，AppendEntries to %d", server))
 	}()
 
 	select {
 	case <-t.C:
+		log.Println(rf.WithState("AppendEntries to %d超时", server))
 		return false
 	case res := <-ch:
 		return res
@@ -283,13 +292,14 @@ func (rf *Raft) SendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	//log.Println(rf.WithState("收到了心跳请求,%v", FormatStruct(args)))
+
 	rf.mu.Lock()
 	defer func() {
 		rf.mu.Unlock()
 	}()
 
 	reply.Term = rf.CurrentTerm
-
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
 		reply.NextLogIndex = 1
