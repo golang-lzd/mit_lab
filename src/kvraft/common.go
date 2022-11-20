@@ -2,9 +2,11 @@ package kvraft
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 )
 
 const (
@@ -54,4 +56,11 @@ func FormatStruct(s interface{}) string {
 func (kv *KVServer) WithState(format string, a ...interface{}) string {
 	_s := fmt.Sprintf(format, a...)
 	return fmt.Sprintf("[] %s", _s)
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
 }

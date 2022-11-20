@@ -4,8 +4,6 @@ import (
 	"6.824/labrpc"
 	"log"
 )
-import "crypto/rand"
-import "math/big"
 
 // 假设每一个clerk 都不会并发执行多个请求,可以通过map[clientID]commandID 记录每一个client的最后一个command.
 //
@@ -16,13 +14,6 @@ type Clerk struct {
 
 	ClientID int64
 	LeaderID int
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
@@ -39,11 +30,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 // you can send an RPC with code like this:
 // ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
+
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{
 		Key:       key,
