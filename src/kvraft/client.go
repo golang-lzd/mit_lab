@@ -2,6 +2,7 @@ package kvraft
 
 import (
 	"6.824/labrpc"
+	"fmt"
 	"log"
 	"math/rand"
 )
@@ -20,7 +21,7 @@ type Clerk struct {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	ck.ClientID = nrand()
+	ck.ClientID = nrand() % 1000
 	ck.LeaderID = rand.Int() % len(servers)
 	return ck
 }
@@ -40,6 +41,8 @@ func (ck *Clerk) Get(key string) string {
 		CommandID: nrand(),
 	}
 	reply := GetReply{}
+
+	log.Println(ck.WithState("Req: Get %s", key))
 	for {
 		ok := ck.servers[ck.LeaderID].Call("KVServer.Get", &args, &reply)
 		if !ok {
@@ -47,11 +50,18 @@ func (ck *Clerk) Get(key string) string {
 		}
 		switch reply.Err {
 		case OK:
+			log.Println(ck.WithState("Resp: Get %s -> %s", key, reply.Value))
 			return reply.Value
 		case ErrNoKey:
+			log.Println(ck.WithState("Resp: Get %s -> %s", key, ""))
 			return ""
 		case ErrWrongLeader:
 			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
+			continue
+		case ErrServer:
+			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
+			continue
+		case ErrCommandTimeOut:
 			continue
 		default:
 			continue
@@ -75,6 +85,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		CommandID: nrand(),
 	}
 	reply := PutAppendReply{}
+
+	log.Println(ck.WithState("Req: putAppend %s %s", key, value))
 	for {
 		ok := ck.servers[ck.LeaderID].Call("KVServer.PutAppend", &args, &reply)
 		if !ok {
@@ -82,12 +94,18 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 		switch reply.Err {
 		case OK:
+			log.Println(ck.WithState("Resp: putAppend %s %s ->", key, value, "Success"))
 			return
 		case ErrNoKey:
-			log.Println("出现了不该出现的错误")
+			log.Println(ck.WithState("出现了不该出现的错误"))
 			panic("出现了不该出现的错误")
 		case ErrWrongLeader:
 			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
+			continue
+		case ErrServer:
+			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
+			continue
+		case ErrCommandTimeOut:
 			continue
 		default:
 			continue
@@ -100,4 +118,9 @@ func (ck *Clerk) Put(key string, value string) {
 }
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
+}
+
+func (ck *Clerk) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[ClientID-%d  LeaderID:%d] %s", ck.ClientID, ck.LeaderID, _s)
 }
