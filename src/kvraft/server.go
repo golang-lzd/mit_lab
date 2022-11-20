@@ -6,12 +6,13 @@ import (
 	"6.824/raft"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Op struct {
 	ReqID int64
 
-	Method    string //"GET" or "PUT" or "Append"
+	Method    string //"Get" or "Put" or "Append"
 	Key       string
 	Value     string
 	ClientID  int64
@@ -35,35 +36,21 @@ type KVServer struct {
 	data              map[string]string
 	notifyWaitCommand map[int64]chan CommandResult
 	lastApplied       map[int64]int64
-	// Your definitions here.
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	command := Op{
 		ReqID:     nrand(),
-		Method:    "GET",
+		Method:    "Get",
 		Key:       args.Key,
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
 	}
-	kv.notifyWaitCommand[command.ReqID] = make(chan CommandResult)
-	defer delete(kv.notifyWaitCommand, command.ReqID)
 
-	_, _, isLeader := kv.rf.Start(command)
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	select {
-	case res := <-kv.notifyWaitCommand[command.ReqID]:
-		reply.Value = res.Value
-		reply.Err = res.ERR
-		return
-	case <-kv.stopCh:
-		// 不该返回rpc 请求
-		return
-	}
+	res := kv.waitCmd(command)
+	reply.Err = res.ERR
+	reply.Value = res.Value
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -76,20 +63,34 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
 	}
-	kv.notifyWaitCommand[command.ReqID] = make(chan CommandResult)
-	defer delete(kv.notifyWaitCommand, command.ReqID)
+
+	res := kv.waitCmd(command)
+	reply.Err = res.ERR
+}
+
+func (kv *KVServer) waitCmd(command Op) (res CommandResult) {
+	kv.mu.Lock()
+	ch := make(chan CommandResult, 1)
+	kv.notifyWaitCommand[command.ReqID] = ch
+	kv.mu.Unlock()
+
+	defer kv.RemoveNotifyWaitCommandCh(command.ReqID)
 
 	_, _, isLeader := kv.rf.Start(command)
 	if !isLeader {
-		reply.Err = ErrWrongLeader
+		res.ERR = ErrWrongLeader
 		return
 	}
+	t := time.NewTimer(WaitCommandTimeOut)
 	select {
-	case res := <-kv.notifyWaitCommand[command.ReqID]:
-		reply.Err = res.ERR
+	case res = <-ch:
 		return
 	case <-kv.stopCh:
 		// 不该返回rpc 请求
+		res.ERR = ErrServer
+		return
+	case <-t.C:
+		res.ERR = ErrCommandTimeOut
 		return
 	}
 }

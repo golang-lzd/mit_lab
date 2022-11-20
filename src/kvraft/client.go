@@ -3,6 +3,7 @@ package kvraft
 import (
 	"6.824/labrpc"
 	"log"
+	"math/rand"
 )
 
 // 假设每一个clerk 都不会并发执行多个请求,可以通过map[clientID]commandID 记录每一个client的最后一个command.
@@ -19,7 +20,8 @@ type Clerk struct {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	// You'll have to add code here.
+	ck.ClientID = nrand()
+	ck.LeaderID = rand.Int() % len(servers)
 	return ck
 }
 
@@ -62,11 +64,7 @@ func (ck *Clerk) Get(key string) string {
 //
 // you can send an RPC with code like this:
 // ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
+
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	args := PutAppendArgs{

@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
-	"fmt"
 	"log"
 	"math/big"
+	"time"
 )
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK                = "OK"
+	ErrNoKey          = "ErrNoKey"
+	ErrWrongLeader    = "ErrWrongLeader"
+	ErrServer         = "ErrServer"
+	ErrCommandTimeOut = "ErrCommandTimeOut"
+)
+
+const (
+	WaitCommandTimeOut = 100 * time.Millisecond
 )
 
 type Err string
@@ -51,11 +57,6 @@ func FormatStruct(s interface{}) string {
 	var out bytes.Buffer
 	json.Indent(&out, bs, "", "\t")
 	return out.String()
-}
-
-func (kv *KVServer) WithState(format string, a ...interface{}) string {
-	_s := fmt.Sprintf(format, a...)
-	return fmt.Sprintf("[] %s", _s)
 }
 
 func nrand() int64 {
