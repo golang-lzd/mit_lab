@@ -521,7 +521,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.CurrentTerm = 0
 	rf.VotedFor = -1
-	rf.Log = []LogItem{{Term: 0, Command: "None"}}
+	rf.Log = []LogItem{{Term: 0, Command: nil}}
 	rf.CommitIndex = 0
 	rf.LastApplied = 0
 	rf.lastSnapShotIndex = 0

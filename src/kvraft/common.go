@@ -1,5 +1,12 @@
 package kvraft
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log"
+)
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -13,9 +20,9 @@ type PutAppendArgs struct {
 	Key   string
 	Value string
 	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+
+	ClientID  int64
+	CommandID int64
 }
 
 type PutAppendReply struct {
@@ -24,10 +31,27 @@ type PutAppendReply struct {
 
 type GetArgs struct {
 	Key string
-	// You'll have to add definitions here.
+
+	ClientID  int64
+	CommandID int64
 }
 
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+func FormatStruct(s interface{}) string {
+	bs, err := json.Marshal(s)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	var out bytes.Buffer
+	json.Indent(&out, bs, "", "\t")
+	return out.String()
+}
+
+func (kv *KVServer) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[] %s", _s)
 }
