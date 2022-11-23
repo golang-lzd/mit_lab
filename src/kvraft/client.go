@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"time"
 )
 
 // 假设每一个clerk 都不会并发执行多个请求,可以通过map[clientID]commandID 记录每一个client的最后一个command.
@@ -46,6 +47,8 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		ok := ck.servers[ck.LeaderID].Call("KVServer.Get", &args, &reply)
 		if !ok {
+			time.Sleep(ChangeLeaderInterval)
+			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
 			continue
 		}
 		switch reply.Err {
@@ -55,15 +58,11 @@ func (ck *Clerk) Get(key string) string {
 		case ErrNoKey:
 			log.Println(ck.WithState("Resp: Get %s -> %s", key, ""))
 			return ""
-		case ErrWrongLeader:
-			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
-			continue
-		case ErrServer:
-			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
-			continue
 		case ErrCommandTimeOut:
 			continue
 		default:
+			time.Sleep(ChangeLeaderInterval)
+			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
 			continue
 		}
 	}
@@ -90,19 +89,23 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		ok := ck.servers[ck.LeaderID].Call("KVServer.PutAppend", &args, &reply)
 		if !ok {
+			time.Sleep(ChangeLeaderInterval)
+			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
 			continue
 		}
 		switch reply.Err {
 		case OK:
-			log.Println(ck.WithState("Resp: putAppend %s %s ->", key, value, "Success"))
+			log.Println(ck.WithState("Resp: putAppend %s %s ->%s", key, value, "Success"))
 			return
 		case ErrNoKey:
 			log.Println(ck.WithState("出现了不该出现的错误"))
 			panic("出现了不该出现的错误")
 		case ErrWrongLeader:
+			time.Sleep(ChangeLeaderInterval)
 			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
 			continue
 		case ErrServer:
+			time.Sleep(ChangeLeaderInterval)
 			ck.LeaderID = (ck.LeaderID + 1) % len(ck.servers)
 			continue
 		case ErrCommandTimeOut:

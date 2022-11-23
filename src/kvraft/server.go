@@ -25,12 +25,13 @@ type CommandResult struct {
 }
 
 type KVServer struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
-	stopCh  chan bool
+	mu        sync.Mutex
+	me        int
+	rf        *raft.Raft
+	applyCh   chan raft.ApplyMsg
+	dead      int32 // set by Kill()
+	stopCh    chan bool
+	persister *raft.Persister
 
 	maxraftstate      int // snapshot if log grows this big
 	data              map[string]string
@@ -127,6 +128,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.lastApplied = make(map[int64]int64)
 	kv.notifyWaitCommand = make(map[int64]chan CommandResult)
 	kv.data = make(map[string]string)
+	kv.persister = persister
+	kv.InitReadSnapShot()
 	// You may need initialization code here.
 
 	go kv.HandleApplyMsg()

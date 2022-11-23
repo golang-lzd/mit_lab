@@ -18,7 +18,8 @@ const (
 )
 
 const (
-	WaitCommandTimeOut = 100 * time.Millisecond
+	WaitCommandTimeOut   = 100 * time.Millisecond
+	ChangeLeaderInterval = 100 * time.Millisecond
 )
 
 type Err string
