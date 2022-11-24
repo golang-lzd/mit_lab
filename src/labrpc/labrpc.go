@@ -103,7 +103,6 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 		// the request has been sent.
 	case <-e.done:
 		// entire Network has been destroyed.
-		log.Println("出现了未知故障")
 		return false
 	}
 

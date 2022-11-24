@@ -14,7 +14,7 @@ const Debug = false
 var file *os.File
 
 func init() {
-	f, err := os.Create(".log-" + strconv.Itoa(int(time.Now().Unix())) + ".txt")
+	f, err := os.Create("log-" + strconv.Itoa(int(time.Now().Unix())) + ".txt")
 	if err != nil {
 		DPrintf("log create file fail!")
 	}
