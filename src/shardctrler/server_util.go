@@ -1,6 +1,9 @@
 package shardctrler
 
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+	"sort"
+)
 
 func init() {
 	labgob.Register(JoinArgs{})
@@ -36,9 +39,9 @@ func (sc *ShardCtrler) HandleApplyMsg() {
 			command := applyMsg.Command.(Op)
 
 			sc.mu.Lock()
-
 			if command.Method == "Query" {
-
+				args := command.Args.(QueryArgs)
+				sc.NotifyWaitCommand(command.ReqID, OK, sc.GetConfigByNum(args.Num), false)
 			} else {
 				isRepeated := false
 				// whether command  has been executed.
@@ -50,13 +53,17 @@ func (sc *ShardCtrler) HandleApplyMsg() {
 
 				if !isRepeated {
 					if command.Method == "Join" {
-
+						args := command.Args.(JoinArgs)
+						sc.handleJoinCommand(args)
 						sc.lastApplied[command.ClientID] = command.CommandID
 					} else if command.Method == "Move" {
-
+						args := command.Args.(MoveArgs)
+						sc.handleMoveCommand(args)
 						sc.lastApplied[command.ClientID] = command.CommandID
 					} else if command.Method == "Leave" {
-
+						args := command.Args.(LeaveArgs)
+						sc.handleLeaveCommand(args)
+						sc.lastApplied[command.ClientID] = command.CommandID
 					} else {
 						sc.mu.Unlock()
 						panic("unsupported method.")
@@ -87,7 +94,7 @@ func (sc *ShardCtrler) handleJoinCommand(args JoinArgs) {
 	for k, v := range args.Servers {
 		config.Groups[k] = v
 	}
-	sc.adjustConfig(&config)
+	sc.AdjustConfig(&config)
 	sc.configs = append(sc.configs, config)
 }
 
@@ -96,7 +103,7 @@ func (sc *ShardCtrler) handleMoveCommand(args MoveArgs) {
 	config.Num += 1
 
 	config.Shards[args.Shard] = args.GID
-	sc.adjustConfig(&config)
+	sc.AdjustConfig(&config)
 	sc.configs = append(sc.configs, config)
 }
 
@@ -112,7 +119,7 @@ func (sc *ShardCtrler) handleLeaveCommand(args LeaveArgs) {
 			}
 		}
 	}
-	sc.adjustConfig(&config)
+	sc.AdjustConfig(&config)
 	sc.configs = append(sc.configs, config)
 }
 
@@ -129,7 +136,7 @@ func (sc *ShardCtrler) handleLeaveCommand(args LeaveArgs) {
 // 0 5 6 4 4
 // 4 5 6 4 4
 
-func (sc *ShardCtrler) adjustConfig(config *Config) {
+func (sc *ShardCtrler) AdjustConfig(config *Config) *Config {
 	if len(config.Groups) == 0 {
 		config.Shards = [NShards]int{}
 	} else if len(config.Groups) == 1 {
@@ -144,10 +151,12 @@ func (sc *ShardCtrler) adjustConfig(config *Config) {
 		isTryAgain := true
 
 		for isTryAgain {
+			isTryAgain = false
 			gids := []int{}
 			for gid, _ := range config.Groups {
 				gids = append(gids, gid)
 			}
+			sort.Ints(gids)
 
 			for _, gid := range gids {
 				// 当前数量
@@ -160,17 +169,91 @@ func (sc *ShardCtrler) adjustConfig(config *Config) {
 				if count == avgShardsCount {
 					continue
 				} else if count > avgShardsCount && otherShardsCount != 0 {
-
+					temp := 0
+					for idx, v := range config.Shards {
+						if v == gid {
+							temp++
+							if temp > avgShardsCount && otherShardsCount != 0 {
+								otherShardsCount--
+							} else if temp > avgShardsCount {
+								config.Shards[idx] = 0
+							}
+						}
+					}
 				} else if count > avgShardsCount && otherShardsCount == 0 {
-
+					temp := 0
+					for idx, v := range config.Shards {
+						if v == gid {
+							temp++
+							if temp > avgShardsCount {
+								config.Shards[idx] = 0
+							}
+						}
+					}
 				} else {
-
+					for idx, g := range config.Shards {
+						if g == 0 {
+							count++
+							config.Shards[idx] = gid
+							if count >= avgShardsCount {
+								break
+							}
+						}
+					}
+					if count < avgShardsCount {
+						isTryAgain = true
+						continue
+					}
 				}
+			}
+			// 剩余的均分
+			cur := 0
+			for idx, v := range config.Shards {
+				if v == 0 {
+					config.Shards[idx] = gids[cur]
+					cur += 1
+					cur = cur % len(gids)
+				}
+			}
+		}
+	} else {
+		// 0 1 2 3 0 0 0 0
 
+		gidFlags := make(map[int]int, 0)
+		emptyShards := make([]int, 0)
+		for idx, v := range config.Shards {
+			if v == 0 {
+				emptyShards = append(emptyShards, idx)
+			} else {
+				if _, ok := gidFlags[v]; ok {
+					config.Shards[idx] = 0
+					emptyShards = append(emptyShards, idx)
+				} else {
+					gidFlags[v] = 1
+				}
 			}
 		}
 
+		if len(emptyShards) > 0 {
+			gids := make([]int, 0)
+			for gid, _ := range config.Groups {
+				gids = append(gids, gid)
+			}
+			sort.Ints(gids)
+			temp := 0
+			for _, gid := range gids {
+				if _, ok := gidFlags[gid]; !ok {
+					gidFlags[gid] = 1
+					config.Shards[emptyShards[temp]] = gid
+					temp++
+					if temp >= len(emptyShards) {
+						break
+					}
+				}
+			}
+		}
 	}
+	return config
 }
 
 func (sc *ShardCtrler) GetConfigByNum(num int) Config {

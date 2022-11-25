@@ -11,7 +11,6 @@ type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
 	ClientID int64
-	LeaderID int
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {

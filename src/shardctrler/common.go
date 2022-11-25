@@ -48,7 +48,6 @@ func (config *Config) Copy() Config {
 
 const (
 	OK                = "OK"
-	ErrNoKey          = "ErrNoKey"
 	ErrWrongLeader    = "ErrWrongLeader"
 	ErrServer         = "ErrServer"
 	ErrCommandTimeOut = "ErrCommandTimeOut"
