@@ -11,7 +11,6 @@ package raft_withbug
 import (
 	"fmt"
 	"log"
-	"os"
 	"testing"
 )
 import "time"
@@ -23,20 +22,20 @@ import "sync"
 // (much more than the paper's range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
-func init() {
-	//f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
-	rand.Seed(time.Now().Unix())
-	s := randstring(10)
-	name := "log_raft" + s + ".log"
-	fmt.Println("name:", name)
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, os.ModePerm)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-	log.SetOutput(f)
-	log.SetFlags(log.Lshortfile | log.LstdFlags | log.Lmicroseconds)
-}
+//func init() {
+//	//f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+//	rand.Seed(time.Now().Unix())
+//	s := randstring(10)
+//	name := "log_raft" + s + ".log"
+//	fmt.Println("name:", name)
+//	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, os.ModePerm)
+//	if err != nil {
+//		fmt.Println(err.Error())
+//		os.Exit(1)
+//	}
+//	log.SetOutput(f)
+//	log.SetFlags(log.Lshortfile | log.LstdFlags | log.Lmicroseconds)
+//}
 
 func TestInitialElection2A(t *testing.T) {
 	servers := 3

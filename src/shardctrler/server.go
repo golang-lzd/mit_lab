@@ -25,7 +25,6 @@ type ShardCtrler struct {
 type CommandResult struct {
 	Err
 	Config
-	WrongLeader bool
 }
 
 type Op struct {
@@ -45,11 +44,13 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 		Method:    "Join",
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
-		Args:      args,
+		Args:      *args,
 	}
 	res := sc.WaitCmd(&command)
 	reply.Err = res.Err
-	reply.WrongLeader = res.WrongLeader
+	if res.Err == ErrWrongLeader {
+		reply.WrongLeader = true
+	}
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
@@ -59,11 +60,13 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 		Method:    "Leave",
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
-		Args:      args,
+		Args:      *args,
 	}
 	res := sc.WaitCmd(&command)
 	reply.Err = res.Err
-	reply.WrongLeader = res.WrongLeader
+	if res.Err == ErrWrongLeader {
+		reply.WrongLeader = true
+	}
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
@@ -73,11 +76,13 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 		Method:    "Move",
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
-		Args:      args,
+		Args:      *args,
 	}
 	res := sc.WaitCmd(&command)
 	reply.Err = res.Err
-	reply.WrongLeader = res.WrongLeader
+	if res.Err == ErrWrongLeader {
+		reply.WrongLeader = true
+	}
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
@@ -94,11 +99,13 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 		Method:    "Query",
 		ClientID:  args.ClientID,
 		CommandID: args.CommandID,
-		Args:      args,
+		Args:      *args,
 	}
 	res := sc.WaitCmd(&command)
 	reply.Err = res.Err
-	reply.WrongLeader = res.WrongLeader
+	if res.Err == ErrWrongLeader {
+		reply.WrongLeader = true
+	}
 	reply.Config = res.Config
 }
 
@@ -108,9 +115,9 @@ func (sc *ShardCtrler) WaitCmd(command *Op) (res CommandResult) {
 	sc.mu.Unlock()
 	defer sc.RemoveNotifyWaitCommandCh(command.ReqID)
 
-	_, _, isLeader := sc.rf.Start(command)
+	_, _, isLeader := sc.rf.Start(*command)
 	if !isLeader {
-		res.WrongLeader = true
+		res.Err = ErrWrongLeader
 		return
 	}
 	t := time.NewTimer(WaitCommandTimeOut)
@@ -119,7 +126,6 @@ func (sc *ShardCtrler) WaitCmd(command *Op) (res CommandResult) {
 		res.Err = ErrCommandTimeOut
 	case result := <-sc.notifyWaitCmd[command.ReqID]:
 		res.Err = result.Err
-		res.WrongLeader = result.WrongLeader
 		res.Config = result.Config
 	case <-sc.stopCh:
 		res.Err = ErrServer
@@ -161,5 +167,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 
 	// Your code here.
 
+	go sc.HandleApplyMsg()
 	return sc
 }
