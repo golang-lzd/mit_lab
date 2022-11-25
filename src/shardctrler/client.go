@@ -6,31 +6,26 @@ package shardctrler
 
 import "6.824/labrpc"
 import "time"
-import "crypto/rand"
-import "math/big"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
+	ClientID int64
+	LeaderID int
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.ClientID = nrand()
 	// Your code here.
 	return ck
 }
 
 func (ck *Clerk) Query(num int) Config {
 	args := &QueryArgs{}
-	// Your code here.
+	args.CommandID = nrand()
+	args.ClientID = ck.ClientID
 	args.Num = num
 	for {
 		// try each known server.
@@ -48,6 +43,8 @@ func (ck *Clerk) Query(num int) Config {
 func (ck *Clerk) Join(servers map[int][]string) {
 	args := &JoinArgs{}
 	// Your code here.
+	args.CommandID = nrand()
+	args.ClientID = ck.ClientID
 	args.Servers = servers
 
 	for {
@@ -66,6 +63,8 @@ func (ck *Clerk) Join(servers map[int][]string) {
 func (ck *Clerk) Leave(gids []int) {
 	args := &LeaveArgs{}
 	// Your code here.
+	args.CommandID = nrand()
+	args.ClientID = ck.ClientID
 	args.GIDs = gids
 
 	for {
@@ -84,6 +83,8 @@ func (ck *Clerk) Leave(gids []int) {
 func (ck *Clerk) Move(shard int, gid int) {
 	args := &MoveArgs{}
 	// Your code here.
+	args.CommandID = nrand()
+	args.ClientID = ck.ClientID
 	args.Shard = shard
 	args.GID = gid
 

@@ -1,8 +1,11 @@
 package shardkv
 
-import "6.824/labrpc"
-import "sync"
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+	"sync"
+)
 
 type Op struct {
 	// Your definitions here.
@@ -13,8 +16,8 @@ type Op struct {
 type ShardKV struct {
 	mu           sync.Mutex
 	me           int
-	rf           *raft_lzd.Raft
-	applyCh      chan raft_lzd.ApplyMsg
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
 	make_end     func(string) *labrpc.ClientEnd
 	gid          int
 	ctrlers      []*labrpc.ClientEnd
@@ -70,7 +73,7 @@ func (kv *ShardKV) Kill() {
 // StartServer() must return quickly, so it should start goroutines
 // for any long-running work.
 //
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft_lzd.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
@@ -87,8 +90,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft_lzd.Persis
 	// Use something like this to talk to the shardctrler:
 	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
-	kv.applyCh = make(chan raft_lzd.ApplyMsg)
-	kv.rf = raft_lzd.Make(servers, me, persister, kv.applyCh)
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	return kv
 }

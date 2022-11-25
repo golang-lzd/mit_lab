@@ -1,6 +1,7 @@
 package shardkv
 
 import "6.824/shardctrler"
+import "6.824/raft"
 import "6.824/labrpc"
 import "testing"
 import "os"
@@ -44,7 +45,7 @@ func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
 type group struct {
 	gid       int
 	servers   []*ShardKV
-	saved     []*raft_lzd.Persister
+	saved     []*raft.Persister
 	endnames  [][]string
 	mendnames [][]string
 }
@@ -238,7 +239,7 @@ func (cfg *config) StartServer(gi int, i int) {
 	if gg.saved[i] != nil {
 		gg.saved[i] = gg.saved[i].Copy()
 	} else {
-		gg.saved[i] = raft_lzd.MakePersister()
+		gg.saved[i] = raft.MakePersister()
 	}
 	cfg.mu.Unlock()
 
@@ -276,7 +277,7 @@ func (cfg *config) StartCtrlerserver(i int) {
 		cfg.net.Enable(endname, true)
 	}
 
-	p := raft_lzd.MakePersister()
+	p := raft.MakePersister()
 
 	cfg.ctrlerservers[i] = shardctrler.StartServer(ends, i, p)
 
@@ -364,7 +365,7 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 		cfg.groups[gi] = gg
 		gg.gid = 100 + gi
 		gg.servers = make([]*ShardKV, cfg.n)
-		gg.saved = make([]*raft_lzd.Persister, cfg.n)
+		gg.saved = make([]*raft.Persister, cfg.n)
 		gg.endnames = make([][]string, cfg.n)
 		gg.mendnames = make([][]string, cfg.nctrlers)
 		for i := 0; i < cfg.n; i++ {

@@ -1,5 +1,11 @@
 package shardctrler
 
+import (
+	"crypto/rand"
+	"math/big"
+	"time"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -28,14 +34,37 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
+func (config *Config) Copy() Config {
+	res := Config{
+		Num:    config.Num,
+		Shards: config.Shards,
+		Groups: make(map[int][]string),
+	}
+	for gid, servers := range config.Groups {
+		res.Groups[gid] = append([]string{}, servers...)
+	}
+	return res
+}
+
 const (
-	OK = "OK"
+	OK                = "OK"
+	ErrNoKey          = "ErrNoKey"
+	ErrWrongLeader    = "ErrWrongLeader"
+	ErrServer         = "ErrServer"
+	ErrCommandTimeOut = "ErrCommandTimeOut"
+)
+
+const (
+	WaitCommandTimeOut = 500 * time.Millisecond
 )
 
 type Err string
 
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
+
+	ClientID  int64
+	CommandID int64
 }
 
 type JoinReply struct {
@@ -45,6 +74,9 @@ type JoinReply struct {
 
 type LeaveArgs struct {
 	GIDs []int
+
+	ClientID  int64
+	CommandID int64
 }
 
 type LeaveReply struct {
@@ -55,6 +87,9 @@ type LeaveReply struct {
 type MoveArgs struct {
 	Shard int
 	GID   int
+
+	ClientID  int64
+	CommandID int64
 }
 
 type MoveReply struct {
@@ -64,10 +99,20 @@ type MoveReply struct {
 
 type QueryArgs struct {
 	Num int // desired config number
+
+	ClientID  int64
+	CommandID int64
 }
 
 type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
 }
