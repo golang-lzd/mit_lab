@@ -5,6 +5,7 @@ import (
 	"6.824/labrpc"
 	"6.824/raft"
 	"sync"
+	"time"
 )
 
 type Op struct {
@@ -37,10 +38,15 @@ type ShardKV struct {
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	res := kv.WaitCmdExec("Get", args.Key, "", args.ClientID, args.CommandID, args.ConfigNum)
+	reply.Err = res.Err
+	reply.Value = res.Value
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	res := kv.WaitCmdExec(args.Op, args.Key, args.Value, args.ClientID, args.CommandID, args.ConfigNum)
+	reply.Err = res.Err
 }
 
 type CommandResult struct {
@@ -48,7 +54,7 @@ type CommandResult struct {
 	Value string
 }
 
-func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID int64, configNum int) CommandResult {
+func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID int64, configNum int) (res CommandResult) {
 	command := Op{
 		ReqID:     nrand(),
 		Method:    method,
@@ -58,7 +64,39 @@ func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID in
 		CommandID: commandID,
 		ConfigNum: configNum,
 	}
-	
+	defer kv.RemoveNotifyCommandCh(command.ReqID)
+
+	_, _, isLeader := kv.rf.Start(command)
+	if !isLeader {
+		res.Err = ErrWrongLeader
+	}
+
+	t := time.NewTimer(WaitCommandTimeOut)
+	select {
+	case <-kv.stopCh:
+		res.Err = ErrServer
+	case <-t.C:
+		res.Err = ErrWaitCommandTimeOut
+	case result := <-kv.notifyWaitCommand[command.ReqID]:
+		res.Err = result.Err
+		res.Value = result.Value
+	}
+	return res
+}
+
+func (kv *ShardKV) RemoveNotifyCommandCh(reqID int64) {
+	kv.mu.Lock()
+	delete(kv.notifyWaitCommand, reqID)
+	kv.mu.Unlock()
+}
+
+func (kv *ShardKV) NotifyWaitCommand(reqID int64, err Err, value string) {
+	if ch, ok := kv.notifyWaitCommand[reqID]; ok {
+		ch <- CommandResult{
+			Err:   err,
+			Value: value,
+		}
+	}
 }
 
 //
@@ -106,6 +144,11 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.ctrlers = ctrlers
+
+	// handle op
+	kv.stopCh = make(chan struct{})
+	kv.lastApplied = make(map[int64]int64)
+	kv.notifyWaitCommand = make(map[int64]chan CommandResult)
 
 	// Your initialization code here.
 

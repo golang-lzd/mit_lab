@@ -12,10 +12,12 @@ import "time"
 //
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK                    = "OK"
+	ErrNoKey              = "ErrNoKey"
+	ErrWrongGroup         = "ErrWrongGroup"
+	ErrWrongLeader        = "ErrWrongLeader"
+	ErrServer             = "ErrServer"
+	ErrWaitCommandTimeOut = "ErrWaitCommandTimeOut"
 )
 
 type Err string
@@ -34,6 +36,7 @@ type PutAppendArgs struct {
 
 	ClientID  int64
 	CommandID int64
+	ConfigNum int
 }
 
 type PutAppendReply struct {
@@ -45,6 +48,7 @@ type GetArgs struct {
 	// You'll have to add definitions here.
 	ClientID  int64
 	CommandID int64
+	ConfigNum int
 }
 
 type GetReply struct {
