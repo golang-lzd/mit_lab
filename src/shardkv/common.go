@@ -25,6 +25,7 @@ type Err string
 const (
 	WaitCommandTimeOut = 500 * time.Millisecond
 	PullConfigTimeOut  = 100 * time.Millisecond
+	PullShardsTimeOut  = 100 * time.Millisecond
 )
 
 // Put or Append

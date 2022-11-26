@@ -4,6 +4,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"6.824/shardctrler"
 	"sync"
 	"time"
 )
@@ -29,11 +30,26 @@ type ShardKV struct {
 	gid          int
 	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
+	sm           *shardctrler.Clerk
 
 	// Your definitions here.
 	stopCh            chan struct{}
-	lastApplied       map[int64]int64
+	lastApplied       [shardctrler.NShards]map[int64]int64
 	notifyWaitCommand map[int64]chan CommandResult
+	data              [shardctrler.NShards]map[string]string
+
+	// shards
+	meShards     map[int]bool
+	inputShards  map[int]bool
+	outputShards []map[int]MergeShardData
+
+	//config
+	config    shardctrler.Config
+	oldConfig shardctrler.Config
+
+	//timer
+	PullConfigTimer *time.Timer
+	PullShardsTime  *time.Timer
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -55,6 +71,7 @@ type CommandResult struct {
 }
 
 func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID int64, configNum int) (res CommandResult) {
+	kv.mu.Lock()
 	command := Op{
 		ReqID:     nrand(),
 		Method:    method,
@@ -64,6 +81,8 @@ func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID in
 		CommandID: commandID,
 		ConfigNum: configNum,
 	}
+	kv.notifyWaitCommand[command.ReqID] = make(chan CommandResult, 1)
+	kv.mu.Unlock()
 	defer kv.RemoveNotifyCommandCh(command.ReqID)
 
 	_, _, isLeader := kv.rf.Start(command)
@@ -110,6 +129,38 @@ func (kv *ShardKV) Kill() {
 	// Your code here, if desired.
 }
 
+func (kv *ShardKV) ticker() {
+
+}
+
+func (kv *ShardKV) pullConfig() {
+	for {
+		select {
+		case <-kv.stopCh:
+			return
+		case <-kv.PullConfigTimer.C:
+			if _, isLeader := kv.rf.GetState(); !isLeader {
+				kv.ResetPullConfigTimer()
+				continue
+			}
+			kv.mu.Lock()
+			lastNum := kv.config.Num
+			kv.mu.Unlock()
+
+			conf := kv.sm.Query(lastNum + 1)
+			if conf.Num == lastNum+1 {
+				kv.mu.Lock()
+				if len(kv.inputShards) == 0 && conf.Num == kv.config.Num+1 {
+					kv.mu.Unlock()
+					kv.rf.Start(conf)
+				} else {
+					kv.mu.Unlock()
+				}
+			}
+		}
+	}
+}
+
 // the k/v server should store snapshots through the underlying Raft
 // implementation, which should call persister.SaveStateAndSnapshot() to
 // atomically save the Raft state along with the snapshot.
@@ -147,16 +198,23 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// handle op
 	kv.stopCh = make(chan struct{})
-	kv.lastApplied = make(map[int64]int64)
+	for i := 0; i < shardctrler.NShards; i++ {
+		kv.lastApplied[i] = make(map[int64]int64)
+		kv.data[i] = make(map[string]string)
+	}
+
 	kv.notifyWaitCommand = make(map[int64]chan CommandResult)
 
-	// Your initialization code here.
+	// shard
+	kv.meShards = make(map[int]bool)
+	kv.inputShards = make(map[int]bool)
 
-	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	// timer
+	kv.PullConfigTimer = time.NewTimer(PullConfigTimeOut)
+	kv.PullShardsTime = time.NewTimer(PullShardsTimeOut)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	kv.sm = shardctrler.MakeClerk(ctrlers)
 	return kv
 }
