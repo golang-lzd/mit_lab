@@ -8,9 +8,15 @@ import (
 )
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	ReqID int64
+
+	Method    string
+	Key       string
+	Value     string
+	ClientID  int64
+	CommandID int64
+
+	ConfigNum int
 }
 
 type ShardKV struct {
@@ -24,6 +30,9 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	stopCh            chan struct{}
+	lastApplied       map[int64]int64
+	notifyWaitCommand map[int64]chan CommandResult
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -32,6 +41,24 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+}
+
+type CommandResult struct {
+	Err
+	Value string
+}
+
+func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID int64, configNum int) CommandResult {
+	command := Op{
+		ReqID:     nrand(),
+		Method:    method,
+		Key:       Key,
+		Value:     Value,
+		ClientID:  clientID,
+		CommandID: commandID,
+		ConfigNum: configNum,
+	}
+	
 }
 
 //
@@ -45,11 +72,6 @@ func (kv *ShardKV) Kill() {
 	// Your code here, if desired.
 }
 
-//
-// servers[] contains the ports of the servers in this group.
-//
-// me is the index of the current server in servers[].
-//
 // the k/v server should store snapshots through the underlying Raft
 // implementation, which should call persister.SaveStateAndSnapshot() to
 // atomically save the Raft state along with the snapshot.
