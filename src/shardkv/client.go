@@ -75,6 +75,8 @@ func (ck *Clerk) Get(key string) string {
 	args.CommandID = nrand()
 
 	for {
+		args.ConfigNum = ck.config.Num
+
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -88,6 +90,9 @@ func (ck *Clerk) Get(key string) string {
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
 					break
+				}
+				if ok && reply.Err != OK {
+					time.Sleep(ChangeLeaderInternal)
 				}
 				// ... not ok, or ErrWrongLeader
 			}
@@ -113,6 +118,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.CommandID = nrand()
 
 	for {
+		args.ConfigNum = ck.config.Num
+
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -125,6 +132,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				}
 				if ok && reply.Err == ErrWrongGroup {
 					break
+				}
+				if ok && reply.Err != OK {
+					time.Sleep(ChangeLeaderInternal)
 				}
 				// ... not ok, or ErrWrongLeader
 			}

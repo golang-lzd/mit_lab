@@ -11,7 +11,9 @@ func (kv *ShardKV) HandleApplyMsg() {
 			return
 		case applyMsg := <-kv.applyCh:
 			if applyMsg.SnapshotValid {
-				// TODO
+				kv.mu.Lock()
+				kv.CondInstallSnapShot(applyMsg.SnapshotTerm, applyMsg.SnapshotIndex, applyMsg.Snapshot)
+				kv.mu.Unlock()
 				continue
 			}
 			cmdIndex := applyMsg.CommandIndex
@@ -19,6 +21,10 @@ func (kv *ShardKV) HandleApplyMsg() {
 				kv.HandleOpCommand(cmdIndex, op)
 			} else if config, ok := applyMsg.Command.(shardctrler.Config); ok {
 				kv.HandleConfigCommand(cmdIndex, config)
+			} else if data, ok := applyMsg.Command.(MergeShardData); ok {
+				kv.HandleMergeShardDataCommand(cmdIndex, data)
+			} else if args, ok := applyMsg.Command.(CleanShardDataArgs); ok {
+				kv.HandleCleanShardDataCommand(cmdIndex, args)
 			} else {
 				panic("unsupported command type.")
 			}
@@ -69,6 +75,9 @@ func (kv *ShardKV) HandleOpCommand(cmdIndex int, command Op) {
 }
 
 func (kv *ShardKV) HandleConfigCommand(cmdIndex int, conf shardctrler.Config) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
 	if conf.Num <= kv.config.Num {
 		return
 	}
@@ -103,40 +112,56 @@ func (kv *ShardKV) HandleConfigCommand(cmdIndex int, conf shardctrler.Config) {
 		}
 	}
 
-	//TODO outputShards
+	kv.outputShards[oldConfig.Num] = make(map[int]MergeShardData)
+	for _, shardID := range outputShards {
+		kv.outputShards[conf.Num][shardID] = MergeShardData{
+			ConfigNum:   oldConfig.Num,
+			ShardID:     shardID,
+			Data:        kv.data[shardID],
+			LastApplied: kv.lastApplied[shardID],
+		}
+		kv.lastApplied[shardID] = make(map[int64]int64)
+		kv.data[shardID] = make(map[string]string)
+	}
+
 	kv.config = conf
 	kv.oldConfig = oldConfig
+
+	kv.SaveSnapShot(cmdIndex)
 }
 
-func (kv *ShardKV) HandleMergeShardDataCommand(cmdIndex int, op Op) {
+func (kv *ShardKV) HandleMergeShardDataCommand(cmdIndex int, data MergeShardData) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 
+	if kv.config.Num != data.ConfigNum+1 {
+		return
+	}
+	if _, ok := kv.inputShards[data.ShardID]; !ok {
+		return
+	}
+	kv.data[data.ShardID] = make(map[string]string)
+	kv.lastApplied[data.ShardID] = make(map[int64]int64)
+
+	for k, v := range data.Data {
+		kv.data[data.ShardID][k] = v
+	}
+	for k, v := range data.LastApplied {
+		kv.lastApplied[data.ShardID][k] = v
+	}
+	delete(kv.inputShards, data.ShardID)
+	go kv.SendCleanShardData(data.ShardID, kv.oldConfig)
+
+	kv.SaveSnapShot(cmdIndex)
 }
 
-func (kv *ShardKV) HandleCleanShardDataCommand(cmdIndex int, op Op) {
+func (kv *ShardKV) HandleCleanShardDataCommand(cmdIndex int, args CleanShardDataArgs) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 
-}
-
-func (kv *ShardKV) GetValueByKey(key string) (Err, string) {
-	shardID := key2shard(key)
-	if val, ok := kv.data[shardID][key]; ok {
-		return OK, val
-	} else {
-		return ErrNoKey, ""
-	}
-}
-
-func (kv *ShardKV) ProcessKeyReady(configNum int, key string) Err {
-	if configNum == 0 || configNum != kv.config.Num {
-		return ErrWrongGroup
+	if kv.OutputDataExists(args.ConfigNum, args.ShardNum) {
+		delete(kv.outputShards[args.ConfigNum], args.ConfigNum)
 	}
 
-	shardID := key2shard(key)
-	if _, ok := kv.meShards[shardID]; !ok {
-		return ErrWrongGroup
-	}
-
-	if _, ok := kv.inputShards[shardID]; ok {
-		return ErrWrongGroup
-	}
-	return OK
+	kv.SaveSnapShot(cmdIndex)
 }

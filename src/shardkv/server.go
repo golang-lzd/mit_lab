@@ -31,7 +31,7 @@ type ShardKV struct {
 	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
 	sm           *shardctrler.Clerk
-
+	persister    *raft.Persister
 	// Your definitions here.
 	stopCh            chan struct{}
 	lastApplied       [shardctrler.NShards]map[int64]int64
@@ -41,7 +41,7 @@ type ShardKV struct {
 	// shards
 	meShards     map[int]bool
 	inputShards  map[int]bool
-	outputShards []map[int]MergeShardData
+	outputShards map[int]map[int]MergeShardData //configNum -> shardID: ShardData(lastApplied+data),ShardID,configNum
 
 	//config
 	config    shardctrler.Config
@@ -126,11 +126,16 @@ func (kv *ShardKV) NotifyWaitCommand(reqID int64, err Err, value string) {
 //
 func (kv *ShardKV) Kill() {
 	kv.rf.Kill()
+	close(kv.stopCh)
 	// Your code here, if desired.
 }
 
 func (kv *ShardKV) ticker() {
+	go kv.HandleApplyMsg()
 
+	go kv.pullConfig()
+
+	go kv.FetchShards()
 }
 
 func (kv *ShardKV) pullConfig() {
@@ -157,6 +162,7 @@ func (kv *ShardKV) pullConfig() {
 					kv.mu.Unlock()
 				}
 			}
+			kv.ResetPullConfigTimer()
 		}
 	}
 }
@@ -195,6 +201,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.ctrlers = ctrlers
+	kv.persister = persister
 
 	// handle op
 	kv.stopCh = make(chan struct{})
@@ -208,6 +215,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// shard
 	kv.meShards = make(map[int]bool)
 	kv.inputShards = make(map[int]bool)
+	kv.outputShards = make(map[int]map[int]MergeShardData)
 
 	// timer
 	kv.PullConfigTimer = time.NewTimer(PullConfigTimeOut)
@@ -216,5 +224,16 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.sm = shardctrler.MakeClerk(ctrlers)
+	kv.config = shardctrler.Config{
+		Num:    0,
+		Shards: [10]int{},
+		Groups: make(map[int][]string),
+	}
+	kv.oldConfig = shardctrler.Config{
+		Num:    0,
+		Shards: [10]int{},
+		Groups: make(map[int][]string),
+	}
+
 	return kv
 }
