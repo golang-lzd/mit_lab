@@ -6,6 +6,7 @@ import (
 )
 
 func init() {
+	labgob.Register(Config{})
 	labgob.Register(JoinArgs{})
 	labgob.Register(QueryArgs{})
 	labgob.Register(LeaveArgs{})

@@ -30,7 +30,7 @@ func (kv *ShardKV) CondInstallSnapShot(snapShotTerm int, snapShotIndex int, snap
 		dec.Decode(&inputShards) != nil ||
 		dec.Decode(&oldConfig) != nil ||
 		dec.Decode(&conf) != nil ||
-		dec.Decode(meShards) != nil {
+		dec.Decode(&meShards) != nil {
 		panic("decode error")
 	}
 	kv.data = data
@@ -43,7 +43,7 @@ func (kv *ShardKV) CondInstallSnapShot(snapShotTerm int, snapShotIndex int, snap
 
 }
 
-func (kv *ShardKV) SaveSnapShot(cmdIndex int) {
+func (kv *ShardKV) saveSnapShot(cmdIndex int) {
 	if kv.maxraftstate == -1 || kv.persister.RaftStateSize() < kv.maxraftstate {
 		return
 	}
@@ -80,15 +80,29 @@ func (kv *ShardKV) InitReadSnapShot() {
 		meShards     map[int]bool
 	)
 
-	if dec.Decode(&data) != nil ||
-		dec.Decode(&lastApplied) != nil ||
-		dec.Decode(&outputShards) != nil ||
-		dec.Decode(&inputShards) != nil ||
-		dec.Decode(&oldConfig) != nil ||
-		dec.Decode(&conf) != nil ||
-		dec.Decode(meShards) != nil {
-		panic("decode error")
+	var err error
+	if err = dec.Decode(&data); err != nil {
+		panic(err.Error())
 	}
+	if err = dec.Decode(&lastApplied); err != nil {
+		panic(err.Error())
+	}
+	if err = dec.Decode(&outputShards); err != nil {
+		panic(err.Error())
+	}
+	if err = dec.Decode(&inputShards); err != nil {
+		panic(err.Error())
+	}
+	if err = dec.Decode(&oldConfig); err != nil {
+		panic(err.Error())
+	}
+	if err = dec.Decode(&conf); err != nil {
+		panic(err.Error())
+	}
+	if err = dec.Decode(&meShards); err != nil {
+		panic(err.Error())
+	}
+
 	kv.data = data
 	kv.lastApplied = lastApplied
 	kv.outputShards = outputShards

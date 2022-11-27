@@ -23,12 +23,12 @@ const (
 type Err string
 
 const (
-	WaitCommandTimeOut   = 500 * time.Millisecond
-	PullConfigTimeOut    = 100 * time.Millisecond
-	PullShardsTimeOut    = 100 * time.Millisecond
-	FetchShardTimeOut    = 100 * time.Millisecond
-	CleanShardTimeOut    = 100 * time.Millisecond
-	ChangeLeaderInternal = 20 * time.Millisecond
+	WaitCommandTimeOut    = 500 * time.Millisecond
+	PullConfigTimeOut     = 100 * time.Millisecond
+	PullShardsTimeOut     = 200 * time.Millisecond
+	SendFetchShardTimeOut = 500 * time.Millisecond
+	SendCleanShardTimeOut = 500 * time.Millisecond
+	ChangeLeaderInternal  = 20 * time.Millisecond
 )
 
 // Put or Append

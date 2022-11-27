@@ -53,12 +53,14 @@ func (kv *ShardKV) FetchShards() {
 		select {
 		case <-kv.stopCh:
 			return
-		case <-kv.PullConfigTimer.C:
+		case <-kv.PullShardsTimer.C:
 			_, isLeader := kv.rf.GetState()
 			if isLeader {
+				kv.mu.Lock()
 				for shardID, _ := range kv.inputShards {
 					go kv.SendFetchShard(shardID, kv.oldConfig)
 				}
+				kv.mu.Unlock()
 			}
 			kv.ResetFetchShardTimer()
 		}
@@ -73,14 +75,16 @@ func (kv *ShardKV) SendFetchShard(shardID int, config shardctrler.Config) {
 		ConfigNum: config.Num,
 	}
 
-	t := time.NewTimer(FetchShardTimeOut)
+	t := time.NewTimer(SendFetchShardTimeOut)
+	defer t.Stop()
+
 	for {
 		for _, server := range config.Groups[config.Shards[shardID]] {
 			reply := FetchShardDataReply{}
 			srv := kv.make_end(server)
 
 			t.Stop()
-			t.Reset(FetchShardTimeOut)
+			t.Reset(SendFetchShardTimeOut)
 			done := make(chan bool, 1)
 			go func(args *FetchShardDataArgs, reply *FetchShardDataReply) {
 				done <- srv.Call("ShardKV.FetchShard", args, reply)
@@ -101,8 +105,8 @@ func (kv *ShardKV) SendFetchShard(shardID int, config shardctrler.Config) {
 							Data:        replyCopy.Data,
 							LastApplied: replyCopy.LastApplied,
 						}
-						kv.rf.Start(mergeShardData)
 						kv.mu.Unlock()
+						kv.rf.Start(mergeShardData)
 						return
 					} else {
 						kv.mu.Unlock()
@@ -110,12 +114,12 @@ func (kv *ShardKV) SendFetchShard(shardID int, config shardctrler.Config) {
 				}
 			}
 		}
-		kv.mu.Lock()
-		if config.Num+1 != kv.config.Num || len(kv.inputShards) == 0 {
-			kv.mu.Unlock()
-			break
-		}
-		kv.mu.Unlock()
+		//kv.mu.Lock()
+		//if config.Num+1 != kv.config.Num || len(kv.inputShards) == 0 {
+		//	kv.mu.Unlock()
+		//	break
+		//}
+		//kv.mu.Unlock()
 	}
 }
 
@@ -132,6 +136,7 @@ func (kv *ShardKV) FetchShard(args *FetchShardDataArgs, reply *FetchShardDataRep
 		if shardData, ok := configData[args.ShardNum]; ok {
 			reply.Success = true
 			reply.Data = make(map[string]string)
+			reply.LastApplied = make(map[int64]int64)
 			for k, v := range shardData.Data {
 				reply.Data[k] = v
 			}
@@ -148,7 +153,7 @@ func (kv *ShardKV) SendCleanShardData(shardID int, config shardctrler.Config) {
 		ConfigNum: config.Num,
 	}
 
-	t := time.NewTimer(CleanShardTimeOut)
+	t := time.NewTimer(SendCleanShardTimeOut)
 	for {
 		for _, server := range config.Groups[config.Shards[shardID]] {
 			reply := CleanShardDataReply{}
@@ -159,7 +164,7 @@ func (kv *ShardKV) SendCleanShardData(shardID int, config shardctrler.Config) {
 			}(&args, &reply)
 
 			t.Stop()
-			t.Reset(CleanShardTimeOut)
+			t.Reset(SendCleanShardTimeOut)
 			select {
 			case <-kv.stopCh:
 				return
@@ -183,21 +188,25 @@ func (kv *ShardKV) SendCleanShardData(shardID int, config shardctrler.Config) {
 
 func (kv *ShardKV) CleanShardData(args *CleanShardDataArgs, reply *CleanShardDataReply) {
 	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
 	if args.ConfigNum >= kv.config.Num {
+		kv.mu.Unlock()
 		return
 	}
+	kv.mu.Unlock()
 
 	_, _, isLeader := kv.rf.Start(*args)
-	if isLeader {
+	if !isLeader {
 		return
 	}
+
 	for i := 0; i < 10; i++ {
+		kv.mu.Lock()
 		if !kv.OutputDataExists(args.ConfigNum, args.ShardNum) {
 			reply.Success = true
+			kv.mu.Unlock()
 			return
 		}
+		kv.mu.Unlock()
 		time.Sleep(20 * time.Millisecond)
 	}
 }

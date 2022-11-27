@@ -111,8 +111,10 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 
 func (sc *ShardCtrler) WaitCmd(command *Op) (res CommandResult) {
 	sc.mu.Lock()
-	sc.notifyWaitCmd[command.ReqID] = make(chan CommandResult, 1)
+	ch := make(chan CommandResult, 1)
+	sc.notifyWaitCmd[command.ReqID] = ch
 	sc.mu.Unlock()
+
 	defer sc.RemoveNotifyWaitCommandCh(command.ReqID)
 
 	_, _, isLeader := sc.rf.Start(*command)
@@ -124,7 +126,7 @@ func (sc *ShardCtrler) WaitCmd(command *Op) (res CommandResult) {
 	select {
 	case <-t.C:
 		res.Err = ErrCommandTimeOut
-	case result := <-sc.notifyWaitCmd[command.ReqID]:
+	case result := <-ch:
 		res.Err = result.Err
 		res.Config = result.Config
 	case <-sc.stopCh:

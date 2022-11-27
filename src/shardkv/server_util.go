@@ -1,10 +1,19 @@
 package shardkv
 
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+	"6.824/shardctrler"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log"
+)
 
 func init() {
 	labgob.Register(CleanShardDataArgs{})
 	labgob.Register(MergeShardData{})
+	labgob.Register(shardctrler.Config{})
+
 }
 
 func (kv *ShardKV) ResetPullConfigTimer() {
@@ -13,8 +22,8 @@ func (kv *ShardKV) ResetPullConfigTimer() {
 }
 
 func (kv *ShardKV) ResetFetchShardTimer() {
-	kv.PullShardsTime.Stop()
-	kv.PullShardsTime.Reset(PullShardsTimeOut)
+	kv.PullShardsTimer.Stop()
+	kv.PullShardsTimer.Reset(PullShardsTimeOut)
 }
 
 func (kv *ShardKV) GetValueByKey(key string) (Err, string) {
@@ -49,4 +58,19 @@ func (kv *ShardKV) OutputDataExists(configNum int, shardID int) bool {
 		}
 	}
 	return false
+}
+
+func FormatStruct(s interface{}) string {
+	bs, err := json.Marshal(s)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	var out bytes.Buffer
+	json.Indent(&out, bs, "", "\t")
+	return out.String()
+}
+
+func (kv *ShardKV) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[Gid-%d  Node-%d  ConfigNum-%d] %s", kv.gid, kv.me, kv.config.Num, _s)
 }

@@ -8,7 +8,11 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"fmt"
+	"log"
+)
 import "crypto/rand"
 import "math/big"
 import "6.824/shardctrler"
@@ -75,8 +79,8 @@ func (ck *Clerk) Get(key string) string {
 	args.CommandID = nrand()
 
 	for {
+		log.Println(ck.WithState("发送Get %s", FormatStruct(args)))
 		args.ConfigNum = ck.config.Num
-
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -86,6 +90,7 @@ func (ck *Clerk) Get(key string) string {
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					log.Println(ck.WithState("Get 成功,Req:%s", FormatStruct(args)))
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
@@ -118,8 +123,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.CommandID = nrand()
 
 	for {
+		log.Println(ck.WithState("发送PutAppend %s", FormatStruct(args)))
 		args.ConfigNum = ck.config.Num
-
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -128,6 +133,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					log.Println(ck.WithState("PutAppend 成功,Req:%s", FormatStruct(args)))
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
@@ -150,4 +156,9 @@ func (ck *Clerk) Put(key string, value string) {
 }
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
+}
+
+func (ck *Clerk) WithState(format string, a ...interface{}) string {
+	_s := fmt.Sprintf(format, a...)
+	return fmt.Sprintf("[ClientID-%d ConfigNum-%d] %s", ck.ClientID, ck.config.Num, _s)
 }

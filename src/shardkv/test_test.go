@@ -1,6 +1,10 @@
 package shardkv
 
-import "6.824/porcupine"
+import (
+	"6.824/porcupine"
+	"log"
+	"os"
+)
 import "6.824/models"
 import "testing"
 import "strconv"
@@ -12,6 +16,21 @@ import "math/rand"
 import "io/ioutil"
 
 const linearizabilityCheckTimeout = 1 * time.Second
+
+func init() {
+	//f, err := os.OpenFile("log_raft.log", os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+	rand.Seed(time.Now().Unix())
+	s := randstring(10)
+	name := "log_raft" + s + ".log"
+	fmt.Println("name:", name)
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.Lshortfile | log.LstdFlags | log.Lmicroseconds)
+}
 
 func check(t *testing.T, ck *Clerk, key string, value string) {
 	v := ck.Get(key)

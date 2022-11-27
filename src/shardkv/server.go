@@ -5,6 +5,7 @@ import (
 	"6.824/labrpc"
 	"6.824/raft"
 	"6.824/shardctrler"
+	"log"
 	"sync"
 	"time"
 )
@@ -49,7 +50,7 @@ type ShardKV struct {
 
 	//timer
 	PullConfigTimer *time.Timer
-	PullShardsTime  *time.Timer
+	PullShardsTimer *time.Timer
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -71,7 +72,6 @@ type CommandResult struct {
 }
 
 func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID int64, configNum int) (res CommandResult) {
-	kv.mu.Lock()
 	command := Op{
 		ReqID:     nrand(),
 		Method:    method,
@@ -81,22 +81,29 @@ func (kv *ShardKV) WaitCmdExec(method, Key, Value string, clientID, commandID in
 		CommandID: commandID,
 		ConfigNum: configNum,
 	}
-	kv.notifyWaitCommand[command.ReqID] = make(chan CommandResult, 1)
-	kv.mu.Unlock()
-	defer kv.RemoveNotifyCommandCh(command.ReqID)
-
 	_, _, isLeader := kv.rf.Start(command)
 	if !isLeader {
 		res.Err = ErrWrongLeader
+		return
 	}
 
+	kv.mu.Lock()
+	ch := make(chan CommandResult, 1)
+	kv.notifyWaitCommand[command.ReqID] = ch
+	kv.mu.Unlock()
+
+	defer kv.RemoveNotifyCommandCh(command.ReqID)
+	
+	log.Println(kv.WithState("执行命令: %s", FormatStruct(command)))
 	t := time.NewTimer(WaitCommandTimeOut)
+	defer t.Stop()
+
 	select {
 	case <-kv.stopCh:
 		res.Err = ErrServer
 	case <-t.C:
 		res.Err = ErrWaitCommandTimeOut
-	case result := <-kv.notifyWaitCommand[command.ReqID]:
+	case result := <-ch:
 		res.Err = result.Err
 		res.Value = result.Value
 	}
@@ -146,7 +153,7 @@ func (kv *ShardKV) pullConfig() {
 		case <-kv.PullConfigTimer.C:
 			if _, isLeader := kv.rf.GetState(); !isLeader {
 				kv.ResetPullConfigTimer()
-				continue
+				break
 			}
 			kv.mu.Lock()
 			lastNum := kv.config.Num
@@ -157,7 +164,7 @@ func (kv *ShardKV) pullConfig() {
 				kv.mu.Lock()
 				if len(kv.inputShards) == 0 && conf.Num == kv.config.Num+1 {
 					kv.mu.Unlock()
-					kv.rf.Start(conf)
+					kv.rf.Start(conf.Copy())
 				} else {
 					kv.mu.Unlock()
 				}
@@ -219,7 +226,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// timer
 	kv.PullConfigTimer = time.NewTimer(PullConfigTimeOut)
-	kv.PullShardsTime = time.NewTimer(PullShardsTimeOut)
+	kv.PullShardsTimer = time.NewTimer(PullShardsTimeOut)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
@@ -234,6 +241,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		Shards: [10]int{},
 		Groups: make(map[int][]string),
 	}
+	kv.InitReadSnapShot()
+
+	kv.ticker()
 
 	return kv
 }
