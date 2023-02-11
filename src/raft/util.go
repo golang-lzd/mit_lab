@@ -416,6 +416,7 @@ func (rf *Raft) TryCommit() {
 	}
 	rf.persist()
 }
+
 func (rf *Raft) ResetElectionTimeOutZeros() {
 	rf.ElectionTimeoutTimer.Stop()
 	rf.ElectionTimeoutTimer.Reset(0 * time.Second)
